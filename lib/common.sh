@@ -1,7 +1,10 @@
 # Shared helpers for psyup. Sourced, not executed.
 
 PSY_HOME="${PSY_HOME:-$HOME/.psy}"
-PSYUP_TOOLCHAIN_REPO="${PSYUP_TOOLCHAIN_REPO:-QEDProtocol/psyup}"
+PSY_NODE_REPO="${PSY_NODE_REPO:-PsyProtocol/psy-node}"
+PSY_COMPILER_REPO="${PSY_COMPILER_REPO:-PsyProtocol/psy-compiler}"
+PSY_GENESIS_REPO="${PSY_GENESIS_REPO:-PsyProtocol/psy-genesis}"
+PSY_GENESIS_BRANCH="${PSY_GENESIS_BRANCH:-mainnet-beta}"
 PSYUP_BOILERPLATE_REPO="${PSYUP_BOILERPLATE_REPO:-PsyProtocol/psy-template}"
 PSYUP_DEFAULT_TEMPLATE="${PSYUP_DEFAULT_TEMPLATE:-dapp}"
 

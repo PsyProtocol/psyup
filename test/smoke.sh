@@ -64,8 +64,8 @@ if [ "$1" = "generate-abi" ]; then
         shift || true
     done
     # Real dargo writes target/<abi-name>.abi.json (abi-name defaults to the
-    # contract type). Mimic that so psyup's --abi-name=<package> lands at
-    # target/<package>.abi.json, which deploy's --abi-path auto-fill expects.
+    # contract type). Mimic that so build output remains covered independently
+    # from deploy; current psy_user_cli reads ABI from the compilation artifact.
     out="${abiname:-$contract}"
     mkdir -p target && : > "target/${out}.abi.json"
     echo "dargo: generated ABI target/${out}.abi.json args=generate-abi -c $contract --abi-name $out"
@@ -76,20 +76,11 @@ EOF
 cat > "$PSY_HOME/toolchains/psy-0.0.0/bin/psy_user_cli" <<'EOF'
 #!/usr/bin/env bash
 
-# Top-level --help advertises capabilities. --abi-path and --result-file can be
-# hidden via env to simulate older toolchains.
+# Top-level --help advertises structured-result support.
 if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
     echo "Usage: psy_user_cli [OPTIONS] <COMMAND>"
     [ -z "${PSY_USER_CLI_NO_RESULT_FILE_HELP:-}" ] && echo "      --result-file <RESULT_FILE>"
     echo "Commands: deploy-contract, wallet, get-user-id, register-user, claim-rewards"
-    exit 0
-fi
-
-if [ "$1" = "deploy-contract" ] && [ "${2:-}" = "--help" ]; then
-    echo "Usage: psy_user_cli deploy-contract [OPTIONS]"
-    if [ -z "${PSY_USER_CLI_NO_ABI_HELP:-}" ]; then
-        echo "      --abi-path <ABI_PATH>"
-    fi
     exit 0
 fi
 
@@ -144,12 +135,13 @@ done
 export PATH="$PSY_HOME/bin:/usr/bin:/bin"
 
 cat > "$PSY_HOME/settings.toml" <<EOF
-active = "0.0.0"
+active_node = "0.0.0"
+active_compiler = "0.0.0"
 default_network = "localhost"
 EOF
 echo '{}' > "$PSY_HOME/config.json"
 
-# 4. build a local fake multi-template tarball (mirrors QEDProtocol/psy-template
+# 4. build a local fake multi-template tarball (mirrors PsyProtocol/psy-template
 #    layout: top-level dirs are templates), serve via file:// URL.
 boiler="$work/boiler/psy-template-main"
 mkdir -p "$boiler/dapp/contract/src" "$boiler/contract/src"
@@ -245,7 +237,7 @@ echo "$override_out" | grep -q 'detected contract:' \
 
 # 7a. deploy passes through to psy_user_cli with user-supplied args.
 # No keystore present here, so identity comes from PRIVATE_KEY env (see 7h for
-# the keystore path); the forwarded args are --contract-path and --abi-path.
+# the keystore path); the forwarded artifact contains both circuits and ABI.
 out=$(PRIVATE_KEY=0xdead "$repo_root/psyup" deploy --contract-path build/main.psyc 2>&1)
 echo "$out" | grep -q 'psy_user_cli invoked: deploy-contract --is-deploy' \
     || { echo "FAIL: deploy didn't invoke psy_user_cli correctly"; echo "$out"; exit 1; }
@@ -253,8 +245,8 @@ echo "$out" | grep -q "RPC_CONFIG=$PSY_HOME/config.json" \
     || { echo "FAIL: deploy didn't export RPC_CONFIG"; echo "$out"; exit 1; }
 echo "$out" | grep -q -- "--contract-path build/main.psyc" \
     || { echo "FAIL: --contract-path passthrough lost"; exit 1; }
-echo "$out" | grep -q -- "--abi-path target/demo.abi.json" \
-    || { echo "FAIL: --abi-path not auto-filled from build output"; echo "$out"; exit 1; }
+echo "$out" | grep -q -- "--abi-path" \
+    && { echo "FAIL: deploy must not pass removed --abi-path option"; echo "$out"; exit 1; } || true
 
 # 7b. auto-fill --contract-path from target/<pkg>.json; PRIVATE_KEY just env-forwarded
 mkdir -p target
@@ -268,8 +260,8 @@ EOF
 out=$(PRIVATE_KEY=0xbeef "$repo_root/psyup" deploy 2>&1)
 echo "$out" | grep -q -- "--contract-path target/token.json" \
     || { echo "FAIL: --contract-path not auto-filled from target/"; echo "$out"; exit 1; }
-echo "$out" | grep -q -- "--abi-path target/token.abi.json" \
-    || { echo "FAIL: --abi-path not auto-filled from target/"; echo "$out"; exit 1; }
+echo "$out" | grep -q -- "--abi-path" \
+    && { echo "FAIL: deploy must use ABI embedded in target/token.json"; echo "$out"; exit 1; } || true
 # PRIVATE_KEY is read natively by psy_user_cli via clap env — psyup should NOT
 # rewrite it into a --private-key flag.
 echo "$out" | grep -q -- "--private-key" \
@@ -281,20 +273,6 @@ echo "$out" | grep -q -- "--contract-path other.json" \
     || { echo "FAIL: user-supplied --contract-path lost"; exit 1; }
 echo "$out" | grep -q "using --contract-path=target/token.json" \
     && { echo "FAIL: should not auto-fill --contract-path when user passes it"; exit 1; } || true
-
-# 7c2. user-supplied --abi-path overrides auto-fill
-out=$(PRIVATE_KEY=0xbeef "$repo_root/psyup" deploy --contract-path other.json --abi-path custom.abi.json 2>&1)
-echo "$out" | grep -q -- "--abi-path custom.abi.json" \
-    || { echo "FAIL: user-supplied --abi-path lost"; echo "$out"; exit 1; }
-echo "$out" | grep -q "using --abi-path=target/token.abi.json" \
-    && { echo "FAIL: should not auto-fill --abi-path when user passes it"; exit 1; } || true
-
-# 7c3. old psy_user_cli versions that don't expose --abi-path should not receive it
-out=$(PSY_USER_CLI_NO_ABI_HELP=1 PRIVATE_KEY=0xbeef "$repo_root/psyup" deploy --contract-path other.json 2>&1)
-echo "$out" | grep -q "does not advertise --abi-path" \
-    || { echo "FAIL: missing warning when psy_user_cli lacks --abi-path"; echo "$out"; exit 1; }
-echo "$out" | grep -q -- "psy_user_cli invoked: .*--abi-path" \
-    && { echo "FAIL: should not pass --abi-path when psy_user_cli does not support it"; echo "$out"; exit 1; } || true
 
 # 7d. successful deploy reads tx_hash from the result file and writes .psy-deploy
 out=$(PRIVATE_KEY=0xbeef "$repo_root/psyup" deploy 2>&1)
@@ -419,10 +397,13 @@ cat > "$install_home/settings.toml" <<EOF
 active = ""
 default_network = "localhost"
 EOF
+# legacy single-`active` setting: install must migrate it to active_node/compiler
 
 PSY_HOME="$install_home" \
 PSYUP_DEFAULT_NETWORK="sepolia" \
-PSYUP_RELEASE_URL="file://$fake_release" \
+PSYUP_RELEASE_URL_NODE="file://$fake_release" \
+PSYUP_RELEASE_URL_COMPILER="file://$fake_release" \
+PSYUP_RELEASE_URL_CONFIG="file://$fake_release/config.json" \
     "$repo_root/psyup" install 0.9.9
 
 # Verify the install landed:
@@ -442,9 +423,11 @@ done
 "$install_home/bin/dargo" --version | grep -q '0.9.9' \
     || { echo "FAIL: installed dargo stub didn't report 0.9.9"; exit 1; }
 
-# settings.toml should now have active = "0.9.9"
-grep -q 'active = "0.9.9"' "$install_home/settings.toml" \
-    || { echo "FAIL: settings.toml active not updated"; cat "$install_home/settings.toml"; exit 1; }
+# settings.toml should now have active_node = active_compiler = "0.9.9"
+grep -q 'active_node = "0.9.9"' "$install_home/settings.toml" \
+    || { echo "FAIL: settings.toml active_node not updated"; cat "$install_home/settings.toml"; exit 1; }
+grep -q 'active_compiler = "0.9.9"' "$install_home/settings.toml" \
+    || { echo "FAIL: settings.toml active_compiler not updated"; cat "$install_home/settings.toml"; exit 1; }
 grep -q 'default_network = "sepolia"' "$install_home/settings.toml" \
     || { echo "FAIL: settings.toml default_network not updated"; cat "$install_home/settings.toml"; exit 1; }
 grep -q 'rpc_config' "$install_home/settings.toml" \
@@ -491,12 +474,14 @@ chmod +x "$fake_path/curl"
 fallback_out=$(
     PATH="$fake_path:/usr/bin:/bin" \
     PSY_HOME="$fallback_home" \
-    PSYUP_RELEASE_URL="file://$fake_release" \
+    PSYUP_RELEASE_URL_NODE="file://$fake_release" \
+    PSYUP_RELEASE_URL_COMPILER="file://$fake_release" \
+    PSYUP_RELEASE_URL_CONFIG="file://$fake_release/config.json" \
         "$repo_root/psyup" install latest 2>&1
 )
 echo "$fallback_out" | grep -q 'falling back to 0.1.0' \
     || { echo "FAIL: latest fallback message missing"; echo "$fallback_out"; exit 1; }
-grep -q 'active = "0.1.0"' "$fallback_home/settings.toml" \
+grep -q 'active_node = "0.1.0"' "$fallback_home/settings.toml" \
     || { echo "FAIL: latest fallback did not install 0.1.0"; cat "$fallback_home/settings.toml"; exit 1; }
 
 # 10. init (offline, stubbed): create wallet → already-registered fast path,

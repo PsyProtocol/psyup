@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
 # psyup installer — bootstraps ~/.psy and drops the psyup script.
-# Usage: curl -fsSL https://raw.githubusercontent.com/QEDProtocol/psyup/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/PsyProtocol/psyup/main/install.sh | bash
+#
+# Remote-only bootstrap: always fetches psyup + lib/ from PSYUP_REPO@PSYUP_BRANCH,
+# even when run from a local checkout. To test uncommitted changes, run the
+# checkout directly instead: PSYUP_LIB="$PWD/lib" ./psyup install
 set -eu
 
-PSYUP_REPO="${PSYUP_REPO:-QEDProtocol/psyup}"
-PSYUP_BRANCH="${PSYUP_BRANCH:-main}"
+PSYUP_REPO="${PSYUP_REPO:-PsyProtocol/psyup}"
+PSYUP_BRANCH="${PSYUP_BRANCH:-mainnet-beta}"
 PSY_HOME="${PSY_HOME:-$HOME/.psy}"
 PSYUP_DEFAULT_NETWORK="${PSYUP_DEFAULT_NETWORK:-localhost}"
+PSY_GENESIS_REPO="${PSY_GENESIS_REPO:-PsyProtocol/psy-genesis}"
+PSY_GENESIS_BRANCH="${PSY_GENESIS_BRANCH:-mainnet-beta}"
 RAW_BASE="https://raw.githubusercontent.com/${PSYUP_REPO}/${PSYUP_BRANCH}"
+CONFIG_URL="https://raw.githubusercontent.com/${PSY_GENESIS_REPO}/${PSY_GENESIS_BRANCH}/config.json"
 
 say()  { printf 'psyup: %s\n' "$*"; }
 die()  { printf 'psyup: error: %s\n' "$*" >&2; exit 1; }
@@ -76,7 +83,26 @@ chmod +x "$PSY_HOME/bin/psyup"
 for f in common.sh cmd_install.sh cmd_new.sh cmd_build.sh cmd_deploy.sh cmd_claim_reward.sh cmd_init.sh cmd_worker.sh; do
     fetch "lib/$f" "$PSY_HOME/lib/$f"
 done
-fetch config.json "$PSY_HOME/config.json"
+fetch_config() {
+    local tmp_file
+    tmp_file=$(mktemp)
+    say "fetching config.json from $PSY_GENESIS_REPO ($PSY_GENESIS_BRANCH)"
+    if curl -fsSL "$CONFIG_URL" -o "$tmp_file"; then
+        if [ -f "$PSY_HOME/config.json" ] && cmp -s "$tmp_file" "$PSY_HOME/config.json"; then
+            rm -f "$tmp_file"
+        else
+            mv "$tmp_file" "$PSY_HOME/config.json"
+        fi
+    else
+        rm -f "$tmp_file"
+        if [ -f "$PSY_HOME/config.json" ]; then
+            say "keeping existing $PSY_HOME/config.json"
+        else
+            die "failed to download $CONFIG_URL"
+        fi
+    fi
+}
+fetch_config
 python3 - "$PSY_HOME/config.json" "$PSYUP_DEFAULT_NETWORK" <<'PY' >/dev/null || die "invalid default network '$PSYUP_DEFAULT_NETWORK' for $PSY_HOME/config.json"
 import json, sys
 cfg = json.load(open(sys.argv[1]))

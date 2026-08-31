@@ -7,7 +7,7 @@ Inspired by `rustup` / `foundryup`.
 
 ```sh
 # 1. Install psyup itself (pins the network to sepolia).
-curl -fsSL https://raw.githubusercontent.com/QEDProtocol/psyup/main/install.sh \
+curl -fsSL https://raw.githubusercontent.com/PsyProtocol/psyup/mainnet-beta/install.sh \
   | PSYUP_DEFAULT_NETWORK=sepolia sh
 # (no need to source — install.sh auto-writes your shell rc)
 
@@ -46,7 +46,7 @@ no chasing dependencies.
 | `psyup uninstall` | Remove `~/.psy` (asks first). |
 | `psyup new <name> [--template <key\|owner/repo\|url>[#subdir]]` | Download a template tarball, rewrite project name in `Dargo.toml` / `package.json`, `git init`. Default template = `dapp`. |
 | `psyup build [args...]` | `dargo compile` plus `dargo generate-abi -c <package>.abi`; auto-detects `--contract-name` from `#[contract]` struct for compilation. |
-| `psyup deploy [args...]` | `psy_user_cli deploy-contract --is-deploy`. Auto-fills `--rpc-config`, `--contract-path`, and `--abi-path` when ABI output exists and `psy_user_cli` supports it. Polls service for numeric `contract_id` and saves to `.psy-deploy`. |
+| `psyup deploy [args...]` | `psy_user_cli deploy-contract --is-deploy`. Auto-fills `--rpc-config` and `--contract-path`; the compilation artifact contains the ABI used by `psy_user_cli`. Polls service for numeric `contract_id` and saves to `.psy-deploy`. |
 | `psyup init` | Create the default wallet at `~/.psy/keystore/default`, register it, and print the `KEYSTORE_PATH` export needed by wallet commands. |
 | `psyup worker [args...]` | Run the proof miner. Uses `KEYSTORE_PATH` when set, otherwise `PRIVATE_KEY`; writes completed jobs to `./worker.backup` by default. |
 | `psyup claim [args...]` | Claim miner rewards. Defaults `--jobs-file` to `./worker.backup` (the worker's default output). |
@@ -72,55 +72,55 @@ export PRIVATE_KEY=<your-hex-key>
 ```
 ~/.psy/
 ├── bin/            # psyup + symlinks to active toolchain
-├── toolchains/     # versioned: psy-<ver>/{bin/, lib/psy-std/, config.json}
+├── toolchains/     # versioned by node release: psy-<node-ver>/{bin/, lib/psy-std/}
 ├── lib/            # psyup's own bash modules (installed by install.sh)
 ├── templates/      # cache (reserved, not used yet)
 ├── env             # POSIX shell env: PATH + DARGO_STD_PATH + RPC_CONFIG
 ├── env.fish        # fish shell env: PATH + DARGO_STD_PATH + RPC_CONFIG
 ├── config.json     # RPC network config consumed by psy_user_cli (--rpc-config)
-└── settings.toml   # active version, default network
+└── settings.toml   # active node/compiler versions, default network
 ```
 
 ## Repository contract
 
-### Toolchain release (this repo)
+### Toolchain releases
 
-The toolchain is published as GitHub Releases on the **psyup repo itself**
-(no separate `psy-toolchain` repo). Each tag `vX.Y.Z` ships four tarballs
-plus a checksum file:
+The toolchain is assembled from two GitHub release sources, downloaded and
+checksum-verified by `psyup install`:
 
-```
-psy-toolchain-vX.Y.Z-aarch64-apple-darwin.tar.gz
-psy-toolchain-vX.Y.Z-x86_64-apple-darwin.tar.gz
-psy-toolchain-vX.Y.Z-aarch64-unknown-linux-gnu.tar.gz
-psy-toolchain-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz
-SHA256SUMS                                          # one line per tarball
-```
+| component | repo | contents |
+|---|---|---|
+| node binaries | `PsyProtocol/psy-node` | `psy_user_cli`, `psy_worker_cli`, `psy_node_cli`, `psy_dev_cli`, `psy_relayer_cli`, `psy-mcp-server` |
+| compiler | `PsyProtocol/psy-compiler` | `bin/dargo`, `lib/psy-std/` stdlib |
 
-Override the source repo with `PSYUP_TOOLCHAIN_REPO=owner/repo` if you need
-to point at a fork.
-
-Each tarball expands to:
+Each repo tags `vX.Y.Z` and ships four per-platform tarballs plus a checksum
+file:
 
 ```
-<toolchain-root>/
-├── bin/
-│   ├── dargo              # contract compiler (psy-compiler)
-│   ├── psy_user_cli       # wallet, deploy-contract, call, withdraw, ...
-│   ├── psy_worker_cli     # run a worker node
-│   ├── psy_node_cli       # run coordinator / realm processors
-│   ├── psy_dev_cli        # dev/debug utilities (read backups, etc.)
-│   └── psy_relayer_cli    # bridge relayer
-├── lib/
-│   └── psy-std/           # bundled stdlib (must contain std.psy + prelude.psy)
-│       ├── std.psy
-│       ├── prelude.psy
-│       └── ...
-└── config.json            # RPC network config
+psy-node-vX.Y.Z-<triple>.tar.gz      # binaries flat at the archive root
+psy-compiler-vX.Y.Z-<triple>.tar.gz  # bin/dargo + lib/psy-std/
+SHA256SUMS                           # one line per tarball
 ```
 
-`psyup install` symlinks every file in `bin/` into `~/.psy/bin/`, so all six
-binaries are on PATH after install.
+where `<triple>` is one of `aarch64-apple-darwin`, `x86_64-apple-darwin`,
+`aarch64-unknown-linux-gnu`, `x86_64-unknown-linux-gnu`.
+
+Override the source repos with `PSY_NODE_REPO` / `PSY_COMPILER_REPO` if you
+need to point at forks.
+
+The two tarballs are merged into one toolchain dir:
+
+```
+~/.psy/toolchains/psy-<node-ver>/
+├── bin/                  # all node binaries + dargo, symlinked into ~/.psy/bin
+└── lib/
+    └── psy-std/          # bundled stdlib (std.psy, prelude.psy, ...)
+```
+
+`psyup install` symlinks every file in `bin/` into `~/.psy/bin/`, so all
+binaries are on PATH after install. A single version argument
+(`psyup install 0.1.1`) pins both components to that version; `latest`
+resolves each repo's latest release independently.
 
 After `psyup install`, `~/.psy/env` is rewritten to export
 `DARGO_STD_PATH=<toolchain-root>/lib/psy-std/std.psy` so the compiler can find
@@ -128,13 +128,26 @@ the stdlib without falling back to a git clone. `~/.psy/env.fish` is rewritten
 with the equivalent fish shell exports. The shell installer sources the matching
 env file from your shell rc. It also exports
 `RPC_CONFIG=~/.psy/config.json` for `psy_user_cli`. Runtime config at
-`~/.psy/config.json` is authoritative once present: `install.sh` installs it,
-and `psyup install/update` preserves it instead of overwriting it from an older
-toolchain tarball. `psyup build` also sets `DARGO_STD_PATH` defensively in
-case the shell didn't source `~/.psy/env`.
+`~/.psy/config.json` is authoritative once present: `install.sh` installs it
+and `psyup install/update` never overwrites it. `psyup build` also sets
+`DARGO_STD_PATH` defensively in case the shell didn't source `~/.psy/env`.
 Set `PSYUP_DEFAULT_NETWORK=<name>` before running `install.sh` or
 `psyup install` to choose the default network; otherwise it defaults to
 `localhost`.
+
+### `PsyProtocol/psy-genesis`
+
+`config.json` (the RPC network config consumed by `psy_user_cli`) is fetched
+raw from the `mainnet-beta` branch of `PsyProtocol/psy-genesis`:
+
+```
+https://raw.githubusercontent.com/PsyProtocol/psy-genesis/mainnet-beta/config.json
+```
+
+Override with `PSY_GENESIS_REPO` / `PSY_GENESIS_BRANCH` (install.sh and
+`psyup install` both honor them). If the fetch fails and no local copy exists,
+`psyup install` continues without it; deploy then requires `--rpc-config` or
+`RPC_CONFIG`.
 
 ### `PsyProtocol/psy-template`
 

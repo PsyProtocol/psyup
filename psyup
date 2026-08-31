@@ -35,7 +35,8 @@ USAGE:
     psyup <command> [args...]
 
 COMMANDS:
-    install [version]    Install the PSY toolchain (psyc, psy-cli). Defaults to latest.
+    install [version]    Install the PSY toolchain. Defaults to latest
+                         (psy-node + psy-compiler releases).
     update               Update the toolchain to the latest released version.
     uninstall            Remove ~/.psy entirely.
     new <name>           Scaffold a new contract project from the boilerplate.
@@ -52,7 +53,10 @@ COMMANDS:
 
 ENVIRONMENT:
     PSY_HOME             Install root (default: ~/.psy)
-    PSYUP_TOOLCHAIN_REPO Override the toolchain repo (default: QEDProtocol/psyup)
+    PSY_NODE_REPO        Node binaries release repo (default: PsyProtocol/psy-node)
+    PSY_COMPILER_REPO    dargo + psy-std release repo (default: PsyProtocol/psy-compiler)
+    PSY_GENESIS_REPO     config.json source repo (default: PsyProtocol/psy-genesis)
+    PSY_GENESIS_BRANCH   config.json source branch (default: mainnet-beta)
 EOF
 }
 

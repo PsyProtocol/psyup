@@ -7,7 +7,8 @@ ensure_dargo_std_path() {
     [ -n "${DARGO_STD_PATH:-}" ] && return 0
 
     local active std_path
-    active=$(settings_get active)
+    active=$(settings_get active_node)
+    [ -n "$active" ] || active=$(settings_get active)
     [ -n "$active" ] || return 0
 
     std_path="$PSY_HOME/toolchains/psy-${active}/lib/psy-std/std.psy"

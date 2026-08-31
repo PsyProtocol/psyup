@@ -1,15 +1,18 @@
 # psyup install / update / uninstall
+#
+# Toolchain sources (all GitHub):
+#   node      PsyProtocol/psy-node     psy_*_cli binaries + psy-mcp-server
+#   compiler  PsyProtocol/psy-compiler dargo + lib/psy-std
+#   config    PsyProtocol/psy-genesis  config.json (raw, branch mainnet-beta)
 
 resolve_latest_version() {
+    # resolve_latest_version <repo>
     need curl
-    local api="https://api.github.com/repos/${PSYUP_TOOLCHAIN_REPO}/releases/latest"
-    local tag fallback="${PSYUP_DEFAULT_VERSION:-0.1.0}"
+    local repo=$1
+    local api="https://api.github.com/repos/${repo}/releases/latest"
+    local tag
     tag=$(curl -fsSL "$api" 2>/dev/null | awk -F'"' '/"tag_name":/ {print $4; exit}') || tag=""
-    if [ -z "$tag" ]; then
-        warn "failed to resolve latest version from $api; falling back to $fallback"
-        printf '%s\n' "$fallback"
-        return 0
-    fi
+    [ -n "$tag" ] || return 1
     # strip leading v
     printf '%s\n' "${tag#v}"
 }
@@ -27,21 +30,17 @@ download_file() {
     fi
 }
 
-install_toolchain() {
-    local version=$1 triple default_network
-    triple=$(detect_triple)
-    default_network=${PSYUP_DEFAULT_NETWORK:-$(settings_get default_network)}
-    [ -n "$default_network" ] || default_network=localhost
-    # PSYUP_RELEASE_URL overrides the release source (any URL curl supports:
-    # https://, file://, etc). Useful for local dist/ testing or mirrors.
-    local base="${PSYUP_RELEASE_URL:-https://github.com/${PSYUP_TOOLCHAIN_REPO}/releases/download/v${version}}"
-    local tarball="psy-toolchain-v${version}-${triple}.tar.gz"
+# fetch <repo> <name-prefix> <version> <triple> <tmpdir>
+# Downloads <name-prefix>-v<version>-<triple>.tar.gz plus the repo's
+# SHA256SUMS, verifies the checksum, and echoes the tarball path.
+fetch_verified_tarball() {
+    local repo=$1 prefix=$2 version=$3 triple=$4 tmp=$5
+    local base="https://github.com/${repo}/releases/download/v${version}"
+    local tarball="${prefix}-v${version}-${triple}.tar.gz"
     local sums="SHA256SUMS"
-    local dest="$PSY_HOME/toolchains/psy-${version}"
-    local tmp
-    tmp=$(mktemp -d)
 
-    say "downloading $tarball"
+    # stdout carries the tarball path (captured by the caller); log to stderr.
+    say "downloading $tarball from $repo" >&2
     download_file "$base/$tarball" "$tmp/$tarball" \
         || die "failed to download $base/$tarball"
     curl -fsSL "$base/$sums" -o "$tmp/$sums" \
@@ -49,39 +48,99 @@ install_toolchain() {
 
     local expected
     expected=$(awk -v f="$tarball" '$2 == f || $2 == "*"f {print $1; exit}' "$tmp/$sums")
-    [ -n "$expected" ] || die "no checksum entry for $tarball in $sums"
+    [ -n "$expected" ] || die "no checksum entry for $tarball in $repo $sums"
     sha256_verify "$tmp/$tarball" "$expected"
 
-    rm -rf "$dest"
-    mkdir -p "$dest"
-    tar -xzf "$tmp/$tarball" -C "$dest" --strip-components=1 \
-        || die "failed to extract $tarball"
+    printf '%s\n' "$tmp/$tarball"
+}
 
-    # Symlink binaries into ~/.psy/bin
+# Like fetch_verified_tarball but for a local override base URL (file://,
+# https://, ...). SHA256SUMS is downloaded from the same base and verified,
+# exactly like the GitHub path.
+fetch_local_tarball() {
+    local base=$1 prefix=$2 version=$3 triple=$4 tmp=$5
+    local tarball="${prefix}-v${version}-${triple}.tar.gz"
+
+    # stdout carries the tarball path (captured by the caller); log to stderr.
+    say "downloading $tarball from $base" >&2
+    download_file "$base/$tarball" "$tmp/$tarball" \
+        || die "failed to download $base/$tarball"
+    download_file "$base/SHA256SUMS" "$tmp/SHA256SUMS" \
+        || die "failed to download $base/SHA256SUMS"
+
+    local expected
+    expected=$(awk -v f="$tarball" '$2 == f || $2 == "*"f {print $1; exit}' "$tmp/SHA256SUMS")
+    [ -n "$expected" ] || die "no checksum entry for $tarball in $base/SHA256SUMS"
+    sha256_verify "$tmp/$tarball" "$expected"
+
+    printf '%s\n' "$tmp/$tarball"
+}
+
+install_toolchain() {
+    local node_version=$1 compiler_version=$2 triple default_network
+    triple=$(detect_triple)
+    default_network=${PSYUP_DEFAULT_NETWORK:-$(settings_get default_network)}
+    [ -n "$default_network" ] || default_network=localhost
+    local dest="$PSY_HOME/toolchains/psy-${node_version}"
+    local tmp
+    tmp=$(mktemp -d)
+
+    # PSYUP_RELEASE_URL_* overrides point the downloads at any URL base curl
+    # supports (https://, file://, ...). Useful for local dist/ testing.
+    local node_base="${PSYUP_RELEASE_URL_NODE:-}"
+    local compiler_base="${PSYUP_RELEASE_URL_COMPILER:-}"
+    local config_url="${PSYUP_RELEASE_URL_CONFIG:-}"
+
+    local node_tarball compiler_tarball
+    if [ -n "$node_base" ]; then
+        node_tarball=$(fetch_local_tarball "$node_base" psy-node "$node_version" "$triple" "$tmp")
+    else
+        node_tarball=$(fetch_verified_tarball "$PSY_NODE_REPO" psy-node "$node_version" "$triple" "$tmp")
+    fi
+
+    if [ -n "$compiler_base" ]; then
+        compiler_tarball=$(fetch_local_tarball "$compiler_base" psy-compiler "$compiler_version" "$triple" "$tmp")
+    else
+        compiler_tarball=$(fetch_verified_tarball "$PSY_COMPILER_REPO" psy-compiler "$compiler_version" "$triple" "$tmp")
+    fi
+
+    rm -rf "$dest"
+    mkdir -p "$dest/bin" "$dest/lib"
+
+    # Node tarball ships binaries flat at the archive root; the compiler
+    # tarball ships bin/ and lib/ at the archive root.
+    tar -xzf "$node_tarball" -C "$dest/bin" \
+        || die "failed to extract $(basename "$node_tarball")"
+    tar -xzf "$compiler_tarball" -C "$dest" \
+        || die "failed to extract $(basename "$compiler_tarball")"
+
+    [ -x "$dest/bin/dargo" ] || die "dargo missing from compiler tarball"
+    [ -f "$dest/lib/psy-std/std.psy" ] || die "psy-std/std.psy missing from compiler tarball"
+
+    # Symlink executables into ~/.psy/bin (skip stray files like LICENSE)
     mkdir -p "$PSY_HOME/bin"
     local b
     for b in "$dest"/bin/*; do
-        [ -e "$b" ] || continue
+        [ -f "$b" ] && [ -x "$b" ] || continue
         ln -sf "$b" "$PSY_HOME/bin/$(basename "$b")"
     done
 
-    update_settings "$version" "$default_network"
+    update_settings "$node_version" "$compiler_version" "$default_network"
 
     rm -rf "$tmp"
 
-    write_env_paths "$version" "$default_network"
+    write_env_paths "$dest" "$default_network" "$config_url"
 
-    say "installed PSY toolchain $version"
+    say "installed PSY toolchain (node $node_version, compiler $compiler_version)"
 }
 
 # Rewrite managed lines in ~/.psy/env to point at files installed from the
-# active toolchain. The toolchain tarball is expected to ship psy-std at
-# <toolchain>/lib/psy-std/std.psy and config.json at the toolchain root.
+# active toolchain.
 write_env_paths() {
-    local version=$1
+    local dest=$1
     local default_network=$2
-    local std_path="$PSY_HOME/toolchains/psy-${version}/lib/psy-std/std.psy"
-    local toolchain_config="$PSY_HOME/toolchains/psy-${version}/config.json"
+    local config_url=${3:-}
+    local std_path="$dest/lib/psy-std/std.psy"
     local rpc_config="$PSY_HOME/config.json"
     local env_file="$PSY_HOME/env"
     local fish_env_file="$PSY_HOME/env.fish"
@@ -89,29 +148,22 @@ write_env_paths() {
 
     [ -f "$env_file" ] || return 0
 
-    if [ ! -f "$std_path" ]; then
-        warn "psy-std not found at $std_path"
-        warn "  the toolchain release should ship lib/psy-std/std.psy"
-        warn "  builds will fall back to git-cloning std (slow)"
-    fi
-
     # Runtime config at ~/.psy/config.json is authoritative once present.
-    # Do not overwrite it from the toolchain tarball on install/update, or an
-    # older packaged config can regress network names/endpoints (e.g. reintroduce
-    # legacy 'staging' after install.sh fetched a newer repo config).
+    # Do not overwrite it on install/update: a packaged copy can regress
+    # network names/endpoints (e.g. reintroduce legacy 'staging').
+    if [ ! -f "$rpc_config" ]; then
+        local genesis_url="${config_url:-https://raw.githubusercontent.com/${PSY_GENESIS_REPO}/${PSY_GENESIS_BRANCH}/config.json}"
+        if download_file "$genesis_url" "$rpc_config"; then
+            say "fetched config.json from $PSY_GENESIS_REPO ($PSY_GENESIS_BRANCH)"
+        else
+            warn "failed to fetch config.json from $genesis_url"
+            warn "  deploy will require --rpc-config or RPC_CONFIG"
+        fi
+    fi
     if [ -f "$rpc_config" ]; then
         validate_network_in_config "$rpc_config" "$default_network"
         set_config_default_network "$rpc_config" "$default_network"
         have_rpc_config=1
-    elif [ -f "$toolchain_config" ]; then
-        cp "$toolchain_config" "$rpc_config"
-        validate_network_in_config "$rpc_config" "$default_network"
-        set_config_default_network "$rpc_config" "$default_network"
-        have_rpc_config=1
-    else
-        warn "config.json not found at $rpc_config or $toolchain_config"
-        warn "  install.sh should install $rpc_config, or the toolchain release should ship config.json"
-        warn "  deploy will require --rpc-config or RPC_CONFIG"
     fi
 
     local tmpf
@@ -154,23 +206,37 @@ write_env_paths() {
 }
 
 update_settings() {
-    local version=$1 default_network=$2 settings="$PSY_HOME/settings.toml"
+    local node_version=$1 compiler_version=$2 default_network=$3 settings="$PSY_HOME/settings.toml"
     local tmpf
 
     if [ ! -f "$settings" ]; then
         cat > "$settings" <<EOF
 # psyup user settings
-active = "$version"
+active_node = "$node_version"
+active_compiler = "$compiler_version"
 default_network = "$default_network"
 EOF
         return 0
     fi
 
     tmpf=$(mktemp)
-    awk -v v="$version" -v n="$default_network" '
+    awk -v nv="$node_version" -v cv="$compiler_version" -v n="$default_network" '
+        /^active_node[[:space:]]*=/ {
+            print "active_node = \"" nv "\""
+            seen_node=1
+            next
+        }
+        /^active_compiler[[:space:]]*=/ {
+            print "active_compiler = \"" cv "\""
+            seen_compiler=1
+            next
+        }
         /^active[[:space:]]*=/ {
-            print "active = \"" v "\""
-            seen_active=1
+            # migrate legacy single-version setting: replace or drop it
+            if (seen_node != 1) {
+                print "active_node = \"" nv "\""
+                seen_node=1
+            }
             next
         }
         /^default_network[[:space:]]*=/ {
@@ -180,7 +246,8 @@ EOF
         }
         { print }
         END {
-            if (seen_active != 1) print "active = \"" v "\""
+            if (seen_node != 1) print "active_node = \"" nv "\""
+            if (seen_compiler != 1) print "active_compiler = \"" cv "\""
             if (seen_network != 1) print "default_network = \"" n "\""
         }
     ' "$settings" > "$tmpf" && mv "$tmpf" "$settings"
@@ -210,7 +277,6 @@ set_config_default_network() {
             flush_prev()
             print indent "\"defaultNetwork\": \"" n "\"" comma
             seen=1
-            depth += count_char($0, "{") - count_char($0, "}")
             next
         }
         /^[[:space:]]*}[[:space:]]*$/ && seen != 1 && depth == 1 {
@@ -228,24 +294,44 @@ set_config_default_network() {
     ' "$config" > "$tmpf" && mv "$tmpf" "$config"
 }
 
+resolve_versions() {
+    # Fills NODE_VERSION / COMPILER_VERSION. A pinned value from settings.toml
+    # wins; otherwise resolve latest from each repo's releases.
+    NODE_VERSION=$(resolve_latest_version "$PSY_NODE_REPO") || {
+        warn "failed to resolve latest ${PSY_NODE_REPO} version; falling back to ${PSYUP_DEFAULT_VERSION:-0.1.0}"
+        NODE_VERSION="${PSYUP_DEFAULT_VERSION:-0.1.0}"
+    }
+    COMPILER_VERSION=$(resolve_latest_version "$PSY_COMPILER_REPO") || {
+        warn "failed to resolve latest ${PSY_COMPILER_REPO} version; falling back to ${NODE_VERSION}"
+        COMPILER_VERSION="$NODE_VERSION"
+    }
+}
+
 cmd_install() {
     local version=${1:-}
     if [ -z "$version" ] || [ "$version" = "latest" ]; then
-        version=$(resolve_latest_version)
+        resolve_versions
+    else
+        # Single argument pins both components to the same version.
+        NODE_VERSION=$version
+        COMPILER_VERSION=$version
     fi
-    install_toolchain "$version"
+    install_toolchain "$NODE_VERSION" "$COMPILER_VERSION"
 }
 
 cmd_update() {
-    local latest current
-    latest=$(resolve_latest_version)
-    current=$(current_version)
-    if [ "$current" = "$latest" ]; then
-        say "already up to date ($current)"
+    resolve_versions
+    local current_node current_compiler
+    current_node=$(settings_get active_node)
+    [ -n "$current_node" ] || current_node=$(settings_get active)
+    current_compiler=$(settings_get active_compiler)
+    [ -n "$current_compiler" ] || current_compiler="$current_node"
+    if [ "$current_node" = "$NODE_VERSION" ] && [ "$current_compiler" = "$COMPILER_VERSION" ]; then
+        say "already up to date (node $current_node, compiler $current_compiler)"
         return 0
     fi
-    say "updating $current -> $latest"
-    install_toolchain "$latest"
+    say "updating node $current_node -> $NODE_VERSION, compiler $current_compiler -> $COMPILER_VERSION"
+    install_toolchain "$NODE_VERSION" "$COMPILER_VERSION"
 }
 
 cmd_uninstall() {

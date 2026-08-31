@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-# Build a fake PSY toolchain release for smoke tests.
+# Build a fake two-repo PSY toolchain release for smoke tests.
+#
+# Mirrors the release layout psyup install consumes:
+#   psy-node-v<version>-<triple>.tar.gz      binaries flat at archive root
+#   psy-compiler-v<version>-<triple>.tar.gz  bin/dargo + lib/psy-std/
+#   SHA256SUMS                               both tarballs
 #
 # Usage:
 #     packaging/make-fake-toolchain.sh <version>
@@ -48,45 +53,62 @@ write_checksum() {
 
 triple=${PSY_TOOLCHAIN_TRIPLE:-$(infer_triple)}
 release_dir=${PSYUP_FAKE_TOOLCHAIN_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/psyup-fake-release.XXXXXX")}
-toolchain_dirname="psy-toolchain-${version}-${triple}"
-stage="$release_dir/$toolchain_dirname"
-tarball_name="${toolchain_dirname}.tar.gz"
-tarball="$release_dir/$tarball_name"
 
-mkdir -p "$stage/bin" "$stage/lib/psy-std"
+# --- psy-node: binaries flat at the archive root ---
+node_stage="$release_dir/psy-node-${version}-${triple}"
+rm -rf "$node_stage"
+mkdir -p "$node_stage"
 
-for bin in dargo psy_user_cli psy_worker_cli psy_node_cli psy_dev_cli psy_relayer_cli; do
-    cat > "$stage/bin/$bin" <<EOF
+for bin in psy_user_cli psy_worker_cli psy_node_cli psy_dev_cli psy_relayer_cli psy-mcp-server; do
+    cat > "$node_stage/$bin" <<EOF
 #!/usr/bin/env bash
 echo "$bin ${version_no_v}"
 EOF
-    chmod +x "$stage/bin/$bin"
+    chmod +x "$node_stage/$bin"
 done
 
-cat > "$stage/lib/psy-std/std.psy" <<'EOF'
+node_tarball="psy-node-${version}-${triple}.tar.gz"
+rm -f "$release_dir/$node_tarball"
+# Real psy-node tarballs ship binaries flat at the archive root.
+( cd "$node_stage" && COPYFILE_DISABLE=1 tar -czf "$release_dir/$node_tarball" . )
+
+# --- psy-compiler: bin/dargo + lib/psy-std/ ---
+compiler_stage="$release_dir/psy-compiler-${version}-${triple}"
+rm -rf "$compiler_stage"
+mkdir -p "$compiler_stage/bin" "$compiler_stage/lib/psy-std"
+
+cat > "$compiler_stage/bin/dargo" <<EOF
+#!/usr/bin/env bash
+echo "dargo ${version_no_v}"
+EOF
+chmod +x "$compiler_stage/bin/dargo"
+
+cat > "$compiler_stage/lib/psy-std/std.psy" <<'EOF'
 // fake psy std
 EOF
+cat > "$compiler_stage/lib/psy-std/prelude.psy" <<'EOF'
+// fake psy prelude
+EOF
 
+compiler_tarball="psy-compiler-${version}-${triple}.tar.gz"
+rm -f "$release_dir/$compiler_tarball"
+# Real psy-compiler tarballs ship bin/ and lib/ at the archive root.
+( cd "$compiler_stage" && COPYFILE_DISABLE=1 tar -czf "$release_dir/$compiler_tarball" bin lib )
+
+# --- checksums for both ---
+: > "$release_dir/SHA256SUMS"
+write_checksum "$release_dir" "$node_tarball"
+write_checksum "$release_dir" "$compiler_tarball"
+
+# --- config.json stand-in for the psy-genesis raw file ---
 if [ -f "$repo_root/config.json" ]; then
-    cp "$repo_root/config.json" "$stage/config.json"
+    cp "$repo_root/config.json" "$release_dir/config.json"
 else
-    cat > "$stage/config.json" <<'EOF'
+    cat > "$release_dir/config.json" <<'EOF'
 {
   "defaultNetwork": "localhost"
 }
 EOF
 fi
-
-rm -f "$tarball"
-( cd "$release_dir" && COPYFILE_DISABLE=1 tar -czf "$tarball_name" "$toolchain_dirname" )
-
-tmp_sums="$release_dir/SHA256SUMS.tmp"
-if [ -f "$release_dir/SHA256SUMS" ]; then
-    grep -v "  $tarball_name$" "$release_dir/SHA256SUMS" > "$tmp_sums" || true
-    mv "$tmp_sums" "$release_dir/SHA256SUMS"
-else
-    : > "$release_dir/SHA256SUMS"
-fi
-write_checksum "$release_dir" "$tarball_name"
 
 printf '%s\n' "$release_dir"

@@ -3,7 +3,6 @@
 # Auto-fills (when not already set on CLI):
 #   --rpc-config     ← RPC_CONFIG env, or $PSY_HOME/config.json
 #   --contract-path  ← ./target/<package>.json, ./<package>.json, or ./build/<package>.json
-#   --abi-path       ← ./target/<package>.abi.json, ./<package>.abi.json, or ./build/<package>.abi.json
 #   --is-deploy      always added
 #
 # Wallet source (resolved in this order, any explicit user arg wins):
@@ -38,18 +37,6 @@ locate_contract_artifact() {
     return 1
 }
 
-# Locate the generated ABI <package>.abi.json. Prints the path or returns 1.
-locate_contract_abi() {
-    local pkg=$1 p
-    for p in "target/$pkg.abi.json" "$pkg.abi.json" "build/$pkg.abi.json"; do
-        if [ -f "$p" ]; then
-            printf '%s\n' "$p"
-            return 0
-        fi
-    done
-    return 1
-}
-
 # Detect which auto-fills are needed by scanning user args.
 has_flag() {
     local needle=$1; shift
@@ -59,10 +46,6 @@ has_flag() {
         esac
     done
     return 1
-}
-
-psy_user_cli_supports_abi_path() {
-    psy_user_cli deploy-contract --help 2>&1 | grep -q -- '--abi-path'
 }
 
 cmd_deploy() {
@@ -123,28 +106,6 @@ cmd_deploy() {
             set -- --contract-path "$artifact" "$@"
         else
             die "compiled artifact not found (looked for target/$pkg.json, $pkg.json, build/$pkg.json) — run 'psyup build' first"
-        fi
-    fi
-
-    # --abi-path auto-fill from build output when supported by psy_user_cli.
-    if [ -z "${ABI_PATH:-}" ] && ! has_flag --abi-path "$@"; then
-        local abi supports_abi_path=0
-        if psy_user_cli_supports_abi_path; then
-            supports_abi_path=1
-        fi
-
-        if [ "$supports_abi_path" -ne 1 ]; then
-            warn "psy_user_cli deploy-contract does not advertise --abi-path; deploying without ABI"
-        elif [ -z "$pkg" ]; then
-            pkg=$(package_name_from_dargo)
-        fi
-        if [ "$supports_abi_path" -eq 1 ] && [ -z "$pkg" ]; then
-            warn "could not read package name from Dargo.toml; skipping --abi-path auto-fill"
-        elif [ "$supports_abi_path" -eq 1 ] && abi=$(locate_contract_abi "$pkg"); then
-            say "using --abi-path=$abi"
-            set -- --abi-path "$abi" "$@"
-        elif [ "$supports_abi_path" -eq 1 ]; then
-            warn "ABI artifact not found (looked for target/$pkg.abi.json, $pkg.abi.json, build/$pkg.abi.json); deploying without ABI"
         fi
     fi
 
