@@ -445,7 +445,7 @@ grep -q "DARGO_STD_PATH \"$install_home/toolchains/psy-0.9.9/lib/psy-std/std.psy
 grep -q "RPC_CONFIG \"$install_home/config.json\"" "$install_home/env.fish" \
     || { echo "FAIL: ~/.psy/env.fish RPC_CONFIG not rewritten"; cat "$install_home/env.fish"; exit 1; }
 
-# 9b. If GitHub latest resolution is rate-limited, install falls back to 0.1.0.
+# 9b. Latest resolution follows the public GitHub redirect and does not touch the rate-limited API.
 PSYUP_FAKE_TOOLCHAIN_DIR="$fake_release" bash "$repo_root/packaging/make-fake-toolchain.sh" 0.1.0 >/dev/null
 fallback_home="$work/.psy-fallback"
 fake_path="$work/fake-path"
@@ -460,13 +460,31 @@ default_network = "localhost"
 EOF
 cat > "$fake_path/curl" <<'EOF'
 #!/usr/bin/env bash
+format=
+output=
+follow=0
+previous=
 for arg in "$@"; do
+    if [ "$previous" = -w ]; then format=$arg; fi
+    if [ "$previous" = -o ]; then output=$arg; fi
     case "$arg" in
+        -*L*) follow=1 ;;
         https://api.github.com/*)
-        echo '{"message":"API rate limit exceeded"}' >&2
-        exit 56
+        echo 'FAIL: GitHub API must not be used to resolve latest' >&2
+        exit 99
+        ;;
+        https://github.com/*/releases/latest)
+        [ "$format" = '%{redirect_url}' ] && [ "$output" = /dev/null ] && [ "$follow" = 0 ] || {
+            echo 'FAIL: latest resolver must read redirect_url without following it' >&2
+            exit 98
+        }
+        repo=${arg#https://github.com/}
+        repo=${repo%/releases/latest}
+        printf 'https://github.com/%s/releases/tag/v0.1.0' "$repo"
+        exit 0
         ;;
     esac
+    previous=$arg
 done
 exec /usr/bin/curl "$@"
 EOF
@@ -479,10 +497,48 @@ fallback_out=$(
     PSYUP_RELEASE_URL_CONFIG="file://$fake_release/config.json" \
         "$repo_root/psyup" install latest 2>&1
 )
-echo "$fallback_out" | grep -q 'falling back to 0.1.0' \
-    || { echo "FAIL: latest fallback message missing"; echo "$fallback_out"; exit 1; }
+echo "$fallback_out" | grep -q 'falling back' \
+    && { echo "FAIL: latest resolution hit fallback instead of redirect"; echo "$fallback_out"; exit 1; }
 grep -q 'active_node = "0.1.0"' "$fallback_home/settings.toml" \
-    || { echo "FAIL: latest fallback did not install 0.1.0"; cat "$fallback_home/settings.toml"; exit 1; }
+    || { echo "FAIL: redirect-based latest resolution did not install 0.1.0"; cat "$fallback_home/settings.toml"; exit 1; }
+
+# 9c. A failed public redirect still falls back to PSYUP_DEFAULT_VERSION.
+PSYUP_FAKE_TOOLCHAIN_DIR="$fake_release" bash "$repo_root/packaging/make-fake-toolchain.sh" 0.1.0 >/dev/null
+fallback_failed_home="$work/.psy-fallback-failed"
+fake_failed_path="$work/fake-failed-path"
+mkdir -p "$fallback_failed_home/bin" "$fallback_failed_home/toolchains" "$fake_failed_path"
+cat > "$fallback_failed_home/env" <<'EOF'
+export PATH="$HOME/.psy/bin:$PATH"
+# DARGO_STD_PATH=__PSYUP_MANAGED__
+EOF
+cat > "$fallback_failed_home/settings.toml" <<EOF
+active = ""
+default_network = "localhost"
+EOF
+cat > "$fake_failed_path/curl" <<'EOF'
+#!/usr/bin/env bash
+for arg in "$@"; do
+    case "$arg" in
+        https://api.github.com/*) exit 22 ;;
+        https://github.com/*/releases/latest) exit 22 ;;
+    esac
+done
+exec /usr/bin/curl "$@"
+EOF
+chmod +x "$fake_failed_path/curl"
+fallback_failed_out=$(
+    PATH="$fake_failed_path:/usr/bin:/bin" \
+    PSY_HOME="$fallback_failed_home" \
+    PSYUP_DEFAULT_VERSION=0.1.0 \
+    PSYUP_RELEASE_URL_NODE="file://$fake_release" \
+    PSYUP_RELEASE_URL_COMPILER="file://$fake_release" \
+    PSYUP_RELEASE_URL_CONFIG="file://$fake_release/config.json" \
+        "$repo_root/psyup" install latest 2>&1
+)
+echo "$fallback_failed_out" | grep -q 'falling back to 0.1.0' \
+    || { echo "FAIL: latest resolution failure did not report fallback"; echo "$fallback_failed_out"; exit 1; }
+grep -q 'active_node = "0.1.0"' "$fallback_failed_home/settings.toml" \
+    || { echo "FAIL: latest resolution failure did not install fallback"; cat "$fallback_failed_home/settings.toml"; exit 1; }
 
 # 10. init (offline, stubbed): create wallet → already-registered fast path,
 #     reading wallet / get-user-id results via --result-file (no log scraping).

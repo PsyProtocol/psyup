@@ -7,12 +7,26 @@
 
 resolve_latest_version() {
     # resolve_latest_version <repo>
+    # Follow GitHub's public releases/latest redirect instead of using the
+    # REST API. Unauthenticated API requests have a low shared rate limit,
+    # while the redirect resolves to .../releases/tag/<tag> without consuming
+    # that quota.
     need curl
     local repo=$1
-    local api="https://api.github.com/repos/${repo}/releases/latest"
-    local tag
-    tag=$(curl -fsSL "$api" 2>/dev/null | awk -F'"' '/"tag_name":/ {print $4; exit}') || tag=""
+    local latest="https://github.com/${repo}/releases/latest"
+    local redirect_url tag
+    redirect_url=$(curl -fsS -o /dev/null -w '%{redirect_url}' "$latest" 2>/dev/null) \
+        || redirect_url=""
+    case "$redirect_url" in
+        https://github.com/*/releases/tag/*)
+            tag=${redirect_url#*/releases/tag/}
+            ;;
+        *) tag="" ;;
+    esac
     [ -n "$tag" ] || return 1
+    # Release assets use simple version tags; reject encoded or special tags
+    # instead of carrying them into filenames and checksum lookups.
+    case "$tag" in *[!A-Za-z0-9._+-]*) return 1 ;; esac
     # strip leading v
     printf '%s\n' "${tag#v}"
 }
