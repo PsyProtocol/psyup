@@ -10,11 +10,11 @@ print_keystore_env_hint() {
 # structured WalletInfoResult (--result-file). Prints the public_key_hash on
 # stdout and returns non-zero on failure. No private keys are handled.
 _read_wallet_public_key_hash() {
-    local keystore_file=$1 password=$2 res rc pkh
+    local keystore_file=$1 password=$2 sign_type=${3:-zk} res rc pkh
     res=$(mktemp)
     # Discard stdout (human logs incl. the private_key line); read the key from $res.
     psy_user_cli --result-file "$res" wallet info \
-        --keystore-path "$keystore_file" --wallet-password "$password" >/dev/null || rc=$?
+        --keystore-path "$keystore_file" --wallet-password "$password" --sign-type "$sign_type" >/dev/null || rc=$?
     if [ "${rc:-0}" -ne 0 ]; then
         rm -f "$res"
         return 1
@@ -29,10 +29,10 @@ _read_wallet_public_key_hash() {
 # (user_id empty unless already registered) and returns the psy_user_cli exit
 # status. "pending" means the registration was submitted but no user_id yet.
 _register_user() {
-    local keystore_file=$1 password=$2 res rc status user_id
+    local keystore_file=$1 password=$2 sign_type=${3:-zk} res rc status user_id
     res=$(mktemp)
     psy_user_cli --result-file "$res" register-user \
-        --keystore-path "$keystore_file" --wallet-password "$password" --sign-type zk >/dev/null || rc=$?
+        --keystore-path "$keystore_file" --wallet-password "$password" --sign-type "$sign_type" >/dev/null || rc=$?
     rc=${rc:-0}
     if [ "$rc" -eq 0 ]; then
         status=$(result_get "$res" status)
@@ -67,6 +67,27 @@ _wait_for_user_id() {
 }
 
 cmd_init() {
+    local sign_type=zk
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --sign-type)
+                [ "$#" -ge 2 ] && [ -n "$2" ] || die "--sign-type requires a value"
+                sign_type=$2
+                shift 2
+                ;;
+            --sign-type=*) sign_type=${1#*=}; shift ;;
+            -h|--help)
+                printf '%s\n' 'Usage: psyup init [--sign-type <zk|secp256k1|eth-personal-secp256k1>]' 'Default sign type: zk'
+                return 0
+                ;;
+            *) die "unknown init argument: $1" ;;
+        esac
+    done
+    case "$sign_type" in
+        zk|secp256k1|eth-personal-secp256k1) ;;
+        *) die "unsupported init sign type: $sign_type (expected zk, secp256k1, or eth-personal-secp256k1)" ;;
+    esac
+
     require_structured_results
 
     local keystore_dir="$PSY_HOME/keystore"
@@ -86,7 +107,7 @@ cmd_init() {
         unset WALLET_PASSWORD
 
         local public_key_hash
-        public_key_hash=$(_read_wallet_public_key_hash "$keystore_file" "$password") \
+        public_key_hash=$(_read_wallet_public_key_hash "$keystore_file" "$password" "$sign_type") \
             || die "failed to read wallet info; check keystore password"
 
         local line rc=0 status user_id=""
@@ -107,7 +128,7 @@ cmd_init() {
         say "registering on chain..."
 
         local rline rrc=0 rstatus ruser_id
-        rline=$(_register_user "$keystore_file" "$password") || rrc=$?
+        rline=$(_register_user "$keystore_file" "$password" "$sign_type") || rrc=$?
         password=""
 
         if [ "$rrc" -eq 0 ]; then
@@ -130,7 +151,7 @@ cmd_init() {
             return 0
         else
             say "⚠️ registration failed"
-            say "  Manual: psy_user_cli register-user --keystore-path $keystore_file --sign-type zk"
+            say "  Manual: psy_user_cli register-user --keystore-path $keystore_file --sign-type $sign_type"
             return "$rrc"
         fi
     fi
@@ -145,8 +166,8 @@ cmd_init() {
     local password="$WALLET_PASSWORD"
     unset WALLET_PASSWORD
 
-    # wallet create writes the WalletCreateResult (with public_key_hash), so we
-    # read the key straight from the result instead of a second `wallet info`.
+    # Wallet creation returns a secp wallet identifier. Read the identity for
+    # the selected sign type before querying registration.
     local rc=0 res public_key_hash
     res=$(mktemp)
     psy_user_cli --result-file "$res" wallet create --output "$keystore_file" --password "$password" >/dev/null || rc=$?
@@ -155,9 +176,9 @@ cmd_init() {
         password=""
         die "failed to create wallet"
     fi
-    public_key_hash=$(result_get "$res" public_key_hash)
     rm -f "$res"
-    [ -n "$public_key_hash" ] || { password=""; die "wallet created but result missing public_key_hash"; }
+    public_key_hash=$(_read_wallet_public_key_hash "$keystore_file" "$password" "$sign_type") \
+        || { password=""; die "wallet created but failed to read wallet info"; }
 
     say ""
     say "✅ wallet created"
@@ -182,7 +203,7 @@ cmd_init() {
     say ""
     say "registering on chain..."
     local rline rrc2=0 rstatus ruser_id
-    rline=$(_register_user "$keystore_file" "$password") || rrc2=$?
+    rline=$(_register_user "$keystore_file" "$password" "$sign_type") || rrc2=$?
     password=""
 
     if [ "$rrc2" -eq 0 ]; then
@@ -205,7 +226,7 @@ cmd_init() {
     else
         say "⚠️ registration failed"
         say "  To register manually, run:"
-        say "  psy_user_cli register-user --keystore-path $keystore_file --sign-type zk"
+        say "  psy_user_cli register-user --keystore-path $keystore_file --sign-type $sign_type"
         return "$rrc2"
     fi
 }

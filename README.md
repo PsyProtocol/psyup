@@ -47,7 +47,7 @@ no chasing dependencies.
 | `psyup new <name> [--template <key\|owner/repo\|url>[#subdir]]` | Download a template tarball, rewrite project name in `Dargo.toml` / `package.json`, `git init`. Default template = `dapp`. |
 | `psyup build [args...]` | `dargo compile` plus `dargo generate-abi -c <package>.abi`; auto-detects `--contract-name` from `#[contract]` struct for compilation. |
 | `psyup deploy [args...]` | `psy_user_cli deploy-contract --is-deploy`. Auto-fills `--rpc-config` and `--contract-path`; the compilation artifact contains the ABI used by `psy_user_cli`. Polls service for numeric `contract_id` and saves to `.psy-deploy`. |
-| `psyup init` | Create the default wallet at `~/.psy/keystore/default`, register it, and print the `KEYSTORE_PATH` export needed by wallet commands. |
+| `psyup init [--sign-type <type>]` | Create the default wallet at `~/.psy/keystore/default`, register it using `zk` by default (also supports `secp256k1` and `eth-personal-secp256k1`), and print the `KEYSTORE_PATH` export needed by wallet commands. |
 | `psyup worker [args...]` | Run the proof miner. Uses `KEYSTORE_PATH` when set, otherwise `PRIVATE_KEY`; writes completed jobs to `./worker.backup` by default. |
 | `psyup claim [args...]` | Claim miner rewards. Defaults `--jobs-file` to `./worker.backup` (the worker's default output). |
 

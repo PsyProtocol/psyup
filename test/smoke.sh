@@ -97,6 +97,8 @@ while [ "$#" -gt 0 ]; do
 done
 set -- "${new[@]}"
 
+[ -z "${PSY_USER_CLI_CALL_LOG:-}" ] || printf '%s\n' "$*" >> "$PSY_USER_CLI_CALL_LOG"
+
 echo "psy_user_cli invoked: $* RPC_CONFIG=${RPC_CONFIG:-unset} PRIVATE_KEY_ENV=${PRIVATE_KEY:-unset}"
 
 # Write the structured result (--result-file), unless the caller asked us to
@@ -106,13 +108,17 @@ if [ -n "$result_file" ] && [ -z "${PSY_USER_CLI_NO_RESULT:-}" ]; then
         deploy-contract)
             printf '{"contract_id":null,"tx_hash":"44684652986c3dc870aa15812544b2b1701a0c16cc2b97281ae6cc9aa4b729de","network":"test","status":"submitted"}\n' > "$result_file" ;;
         wallet)
+            if [ "$2" = "create" ] && [ -n "${PSY_USER_CLI_CREATE_HASH:-}" ]; then
+                printf '{"public_key_hash":"%s"}\n' "$PSY_USER_CLI_CREATE_HASH" > "$result_file"
+                exit 0
+            fi
             printf '{"public_key_hash":"0d47fda4480f045506b085ba6921fc86d8cc6feb1b533292db4b1a3af8f89eab","keystore_path":null}\n' > "$result_file" ;;
         get-user-id)
             printf '{"public_key_hash":"0d47fda4480f045506b085ba6921fc86d8cc6feb1b533292db4b1a3af8f89eab","user_id":%s,"status":"%s"}\n' \
                 "${PSY_USER_CLI_USER_ID:-42}" "${PSY_USER_CLI_REG_STATUS:-registered}" > "$result_file" ;;
         register-user)
             printf '{"public_key_hash":"0d47fda4480f045506b085ba6921fc86d8cc6feb1b533292db4b1a3af8f89eab","user_id":%s,"transaction_hash":"abc","status":"%s"}\n' \
-                "${PSY_USER_CLI_USER_ID:-42}" "${PSY_USER_CLI_REG_STATUS:-registered}" > "$result_file" ;;
+                "${PSY_USER_CLI_USER_ID:-42}" "${PSY_USER_CLI_REGISTER_STATUS:-${PSY_USER_CLI_REG_STATUS:-registered}}" > "$result_file" ;;
         claim-rewards)
             printf '{"status":"claimed","tx_hash":"claimtx123"}\n' > "$result_file" ;;
     esac
@@ -556,6 +562,43 @@ echo "$init_out" | grep -q 'user already registered (user_id: 42)' \
     || { echo "FAIL: init did not reach already-registered path"; echo "$init_out"; exit 1; }
 echo "$init_out" | grep -q "export KEYSTORE_PATH=\"$init_home/keystore/default\"" \
     || { echo "FAIL: init did not print KEYSTORE_PATH setup hint"; echo "$init_out"; exit 1; }
+
+# Distinct create/info identities catch polling the secp creation identifier.
+# Exercise both new and existing wallets, default zk and explicit sign types.
+for sign_type in zk secp256k1 eth-personal-secp256k1; do
+    for existing in no yes; do
+        mkdir -p "$init_home/keystore"
+        if [ "$existing" = yes ]; then
+            : > "$init_home/keystore/default"
+        else
+            rm -f "$init_home/keystore/default"
+        fi
+        call_log="$work/init-calls"
+        : > "$call_log"
+        init_args=()
+        [ "$sign_type" = zk ] || init_args=(--sign-type "$sign_type")
+        init_out=$(printf 'pass\n' | PSY_USER_CLI_CALL_LOG="$call_log" \
+            PSY_USER_CLI_CREATE_HASH=creation-only PSY_USER_CLI_REG_STATUS=pending \
+            PSY_USER_CLI_REGISTER_STATUS=registered \
+            PSY_HOME="$init_home" PATH="$init_home/bin:/usr/bin:/bin" \
+            "$repo_root/psyup" init ${init_args[@]+"${init_args[@]}"} 2>&1) || true
+        grep -q "wallet info .*--sign-type $sign_type" "$call_log" \
+            || { echo "FAIL: init wallet info sign type $sign_type ($existing)"; exit 1; }
+        grep -q "register-user .*--sign-type $sign_type" "$call_log" \
+            || { echo "FAIL: init registration sign type $sign_type ($existing)"; exit 1; }
+        grep -q 'creation-only' "$call_log" \
+            && { echo "FAIL: init queried creation identifier"; exit 1; } || true
+        grep -q 'get-user-id --pub-key 0d47fda4' "$call_log" \
+            || { echo "FAIL: init did not query selected wallet identity"; exit 1; }
+    done
+done
+for bad_args in '--sign-type' '--sign-type=invalid' '--unknown'; do
+    if PSY_HOME="$init_home" PATH="$init_home/bin:/usr/bin:/bin" \
+        "$repo_root/psyup" init $bad_args </dev/null >/dev/null 2>&1; then
+        echo "FAIL: init accepted invalid arguments: $bad_args"
+        exit 1
+    fi
+done
 
 # 11. worker (offline, stubbed): keystore path forwards --keystore-path and the
 #     password via env to psy_worker_cli; no --private-key is exported by psyup.
