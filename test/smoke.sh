@@ -502,43 +502,56 @@ echo "$fallback_out" | grep -q 'falling back' \
 grep -q 'active_node = "0.1.0"' "$fallback_home/settings.toml" \
     || { echo "FAIL: redirect-based latest resolution did not install 0.1.0"; cat "$fallback_home/settings.toml"; exit 1; }
 
-# 9c. A failed public redirect still falls back to PSYUP_DEFAULT_VERSION.
-PSYUP_FAKE_TOOLCHAIN_DIR="$fake_release" bash "$repo_root/packaging/make-fake-toolchain.sh" 0.1.0 >/dev/null
-fallback_failed_home="$work/.psy-fallback-failed"
+# 9c. Failed latest resolution must not install an unrelated historical release
+# or replace a working toolchain. Cover both components and both entry points.
+latest_failed_home="$work/.psy-latest-failed"
 fake_failed_path="$work/fake-failed-path"
-mkdir -p "$fallback_failed_home/bin" "$fallback_failed_home/toolchains" "$fake_failed_path"
-cat > "$fallback_failed_home/env" <<'EOF'
-export PATH="$HOME/.psy/bin:$PATH"
-# DARGO_STD_PATH=__PSYUP_MANAGED__
-EOF
-cat > "$fallback_failed_home/settings.toml" <<EOF
-active = ""
-default_network = "localhost"
-EOF
+mkdir -p "$latest_failed_home/bin" "$latest_failed_home/toolchains" "$fake_failed_path"
+printf 'existing toolchain\n' > "$latest_failed_home/bin/dargo"
+printf 'active_node = "0.9.9"\nactive_compiler = "0.9.9"\n' > "$latest_failed_home/settings.toml"
+cp "$latest_failed_home/settings.toml" "$work/settings-before-latest-failure.toml"
 cat > "$fake_failed_path/curl" <<'EOF'
 #!/usr/bin/env bash
 for arg in "$@"; do
     case "$arg" in
-        https://api.github.com/*) exit 22 ;;
-        https://github.com/*/releases/latest) exit 22 ;;
+        https://github.com/*/releases/latest)
+            repo=${arg#https://github.com/}
+            repo=${repo%/releases/latest}
+            [ "$repo" != "$PSYUP_TEST_FAILED_REPO" ] || exit 22
+            printf 'https://github.com/%s/releases/tag/v0.1.0' "$repo"
+            exit 0
+            ;;
     esac
 done
-exec /usr/bin/curl "$@"
+printf 'unexpected download\n' >> "$PSYUP_TEST_DOWNLOAD_LOG"
+exit 99
 EOF
 chmod +x "$fake_failed_path/curl"
-fallback_failed_out=$(
-    PATH="$fake_failed_path:/usr/bin:/bin" \
-    PSY_HOME="$fallback_failed_home" \
-    PSYUP_DEFAULT_VERSION=0.1.0 \
-    PSYUP_RELEASE_URL_NODE="file://$fake_release" \
-    PSYUP_RELEASE_URL_COMPILER="file://$fake_release" \
-    PSYUP_RELEASE_URL_CONFIG="file://$fake_release/config.json" \
-        "$repo_root/psyup" install latest 2>&1
-)
-echo "$fallback_failed_out" | grep -q 'falling back to 0.1.0' \
-    || { echo "FAIL: latest resolution failure did not report fallback"; echo "$fallback_failed_out"; exit 1; }
-grep -q 'active_node = "0.1.0"' "$fallback_failed_home/settings.toml" \
-    || { echo "FAIL: latest resolution failure did not install fallback"; cat "$fallback_failed_home/settings.toml"; exit 1; }
+for failed_repo in PsyProtocol/psy-node PsyProtocol/psy-compiler; do
+    for command in install update; do
+        if latest_failed_out=$(
+            PATH="$fake_failed_path:/usr/bin:/bin" \
+            PSY_HOME="$latest_failed_home" \
+            PSYUP_DEFAULT_VERSION=0.1.0 \
+            PSYUP_TEST_FAILED_REPO="$failed_repo" \
+            PSYUP_TEST_DOWNLOAD_LOG="$work/unexpected-downloads" \
+                "$repo_root/psyup" "$command" 2>&1
+        ); then
+            echo "FAIL: $command accepted failed latest resolution for $failed_repo"
+            exit 1
+        fi
+        echo "$latest_failed_out" | grep -Fq "failed to resolve latest $failed_repo release" \
+            || { echo "FAIL: missing failed release identity"; echo "$latest_failed_out"; exit 1; }
+        echo "$latest_failed_out" | grep -Fq 'psyup install <version>' \
+            || { echo "FAIL: missing explicit-version recovery instruction"; echo "$latest_failed_out"; exit 1; }
+        cmp -s "$work/settings-before-latest-failure.toml" "$latest_failed_home/settings.toml" \
+            || { echo "FAIL: failed latest lookup changed active toolchain settings"; exit 1; }
+        grep -Fxq 'existing toolchain' "$latest_failed_home/bin/dargo" \
+            || { echo "FAIL: failed latest lookup replaced existing executable"; exit 1; }
+        [ ! -e "$work/unexpected-downloads" ] \
+            || { echo "FAIL: failed latest lookup attempted an asset download"; exit 1; }
+    done
+done
 
 # 10. init (offline, stubbed): create wallet → already-registered fast path,
 #     reading wallet / get-user-id results via --result-file (no log scraping).
