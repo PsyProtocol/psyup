@@ -98,15 +98,22 @@ cmd_claim_reward() {
             rm -f "$res"
             die "claim succeeded but psy_user_cli wrote no result file — toolchain output protocol incompatible"
         fi
-        local status tx_hash
+        local status transaction_hash chain_id
         status=$(result_get "$res" status)
-        tx_hash=$(result_get "$res" tx_hash)
+        transaction_hash=$(result_get "$res" transaction_hash)
+        chain_id=$(result_get "$res" chain_id)
         rm -f "$res"
         if [ -n "$status" ]; then
             say "✓ status: $status"
         fi
-        if [ -n "$tx_hash" ]; then
-            say "✓ tx_hash: $tx_hash"
+        if [ -n "$transaction_hash" ]; then
+            say "✓ transaction_hash: $transaction_hash"
+        fi
+        if [ -n "$chain_id" ]; then
+            say "✓ chain_id: $chain_id"
+        fi
+        if [ "$status" = "proof_only" ]; then
+            say "No L1 payout was confirmed."
         fi
     else
         rm -f "$res"

@@ -46,6 +46,7 @@ COMMANDS:
                          Pass-through; auto-fills --rpc-config from settings.toml.
     claim [args...]      Claim miner rewards via psy_user_cli claim-rewards.
                          Pass-through; auto-fills --rpc-config and --jobs-file.
+                         Requires reward token, recipient, L1 RPC and L1 signer.
     init [--sign-type <type>]
                          Create and register the default wallet (default: zk).
     worker               Run the proof miner (resolves user_id from keystore or PRIVATE_KEY).

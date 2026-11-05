@@ -51,6 +51,24 @@ no chasing dependencies.
 | `psyup worker [args...]` | Run the proof miner. Uses `KEYSTORE_PATH` when set, otherwise `PRIVATE_KEY`; writes completed jobs to `./worker.backup` by default. |
 | `psyup claim [args...]` | Claim miner rewards. Defaults `--jobs-file` to `./worker.backup` (the worker's default output). |
 
+Reward claims submit an L1 transaction. Use the registered ZK wallet that ran
+the worker as the reward owner, and provide a separate EVM signing key with
+funds for gas. For example:
+
+```sh
+export REWARD_TOKEN=<reward-token-address>
+export RECIPIENT=<ethereum-recipient-address>
+export L1_RPC_URL=<ethereum-rpc-url>
+export L1_PRIVATE_KEY=<evm-signing-key>
+psyup claim
+```
+
+The selected network in `PSY_CONFIG_PATH` supplies the system prove-proxy;
+the registered ZK wallet determines the reward owner. Pass `--jobs-file` to
+select a different worker backup and `--proof-cache-dir` to change the proof
+cache location. The original backup is preserved. A `confirmed` result reports
+the last confirmed L1 transaction; `proof_only` means no L1 payout was confirmed.
+
 Wallet commands select credentials from the environment. `KEYSTORE_PATH` takes
 priority over `PRIVATE_KEY`; if it is set, it must point to an existing file.
 After creating the default wallet, configure the current shell with:

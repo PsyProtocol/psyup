@@ -31,8 +31,9 @@ echo "$env_out" | grep -Fq ". \"$PSY_HOME/env\"" \
 mkdir -p "$PSY_HOME/bin"
 env_out=$(PATH="$PSY_HOME/bin/:/usr/bin:/bin" PSY_HOME="$PSY_HOME" PSYUP_LIB="$repo_root/lib" \
     "$repo_root/psyup" claim 2>&1) || true
-echo "$env_out" | grep -q 'environment is not loaded' \
-    && { echo "FAIL: trailing slash in PSY_HOME/bin caused a false env warning"; echo "$env_out"; exit 1; } || true
+if echo "$env_out" | grep -q 'environment is not loaded'; then
+    echo "FAIL: trailing slash in PSY_HOME/bin caused a false env warning"; echo "$env_out"; exit 1
+fi
 rm -rf "$PSY_HOME/bin"
 rm -f "$PSY_HOME/env"
 
@@ -120,7 +121,8 @@ if [ -n "$result_file" ] && [ -z "${PSY_USER_CLI_NO_RESULT:-}" ]; then
             printf '{"public_key_hash":"0d47fda4480f045506b085ba6921fc86d8cc6feb1b533292db4b1a3af8f89eab","user_id":%s,"transaction_hash":"abc","status":"%s"}\n' \
                 "${PSY_USER_CLI_USER_ID:-42}" "${PSY_USER_CLI_REGISTER_STATUS:-${PSY_USER_CLI_REG_STATUS:-registered}}" > "$result_file" ;;
         claim-rewards)
-            printf '{"status":"claimed","tx_hash":"claimtx123"}\n' > "$result_file" ;;
+            printf '{"status":"%s","transaction_hash":%s,"chain_id":11155111}\n' \
+                "${PSY_CLAIM_STATUS:-confirmed}" "${PSY_CLAIM_HASH:-\"claimtx123\"}" > "$result_file" ;;
     esac
 fi
 exit 0
@@ -238,8 +240,9 @@ echo "$override_out" | grep -q -- '--contract-name=CustomRef' \
     || { echo "FAIL: user override of --contract-name"; echo "$override_out"; exit 1; }
 echo "$override_out" | grep -q 'dargo: generated ABI target/demo.abi.json' \
     || { echo "FAIL: ABI generation did not use package ABI name"; echo "$override_out"; exit 1; }
-echo "$override_out" | grep -q 'detected contract:' \
-    && { echo "FAIL: should not auto-detect when user passed --contract-name"; exit 1; } || true
+if echo "$override_out" | grep -q 'detected contract:'; then
+    echo "FAIL: should not auto-detect when user passed --contract-name"; exit 1
+fi
 
 # 7a. deploy passes through to psy_user_cli with user-supplied args.
 # No keystore present here, so identity comes from PRIVATE_KEY env (see 7h for
@@ -251,8 +254,9 @@ echo "$out" | grep -q "PSY_CONFIG_PATH=$PSY_HOME/config.json" \
     || { echo "FAIL: deploy didn't export PSY_CONFIG_PATH"; echo "$out"; exit 1; }
 echo "$out" | grep -q -- "--contract-path build/main.psyc" \
     || { echo "FAIL: --contract-path passthrough lost"; exit 1; }
-echo "$out" | grep -q -- "--abi-path" \
-    && { echo "FAIL: deploy must not pass removed --abi-path option"; echo "$out"; exit 1; } || true
+if echo "$out" | grep -q -- "--abi-path"; then
+    echo "FAIL: deploy must not pass removed --abi-path option"; echo "$out"; exit 1
+fi
 
 # 7b. auto-fill --contract-path from target/<pkg>.json; PRIVATE_KEY just env-forwarded
 mkdir -p target
@@ -266,19 +270,22 @@ EOF
 out=$(PRIVATE_KEY=0xbeef "$repo_root/psyup" deploy 2>&1)
 echo "$out" | grep -q -- "--contract-path target/token.json" \
     || { echo "FAIL: --contract-path not auto-filled from target/"; echo "$out"; exit 1; }
-echo "$out" | grep -q -- "--abi-path" \
-    && { echo "FAIL: deploy must use ABI embedded in target/token.json"; echo "$out"; exit 1; } || true
+if echo "$out" | grep -q -- "--abi-path"; then
+    echo "FAIL: deploy must use ABI embedded in target/token.json"; echo "$out"; exit 1
+fi
 # PRIVATE_KEY is read natively by psy_user_cli via clap env — psyup should NOT
 # rewrite it into a --private-key flag.
-echo "$out" | grep -q -- "--private-key" \
-    && { echo "FAIL: psyup should leave PRIVATE_KEY env alone, not synthesize --private-key"; exit 1; } || true
+if echo "$out" | grep -q -- "--private-key"; then
+    echo "FAIL: psyup should leave PRIVATE_KEY env alone, not synthesize --private-key"; exit 1
+fi
 
 # 7c. user-supplied --contract-path overrides auto-fill
 out=$(PRIVATE_KEY=0xbeef "$repo_root/psyup" deploy --contract-path other.json 2>&1)
 echo "$out" | grep -q -- "--contract-path other.json" \
     || { echo "FAIL: user-supplied --contract-path lost"; exit 1; }
-echo "$out" | grep -q "using --contract-path=target/token.json" \
-    && { echo "FAIL: should not auto-fill --contract-path when user passes it"; exit 1; } || true
+if echo "$out" | grep -q "using --contract-path=target/token.json"; then
+    echo "FAIL: should not auto-fill --contract-path when user passes it"; exit 1
+fi
 
 # 7d. successful deploy reads tx_hash from the result file and writes .psy-deploy
 out=$(PRIVATE_KEY=0xbeef "$repo_root/psyup" deploy 2>&1)
@@ -319,8 +326,9 @@ echo "$out" | grep -q 'using keystore:' \
     || { echo "FAIL: deploy should report keystore use"; echo "$out"; exit 1; }
 echo "$out" | grep -q -- "--keystore-path" \
     || { echo "FAIL: deploy should forward --keystore-path when keystore present"; echo "$out"; exit 1; }
-echo "$out" | grep -q -- "--private-key" \
-    && { echo "FAIL: deploy must not forward --private-key in keystore mode"; echo "$out"; exit 1; } || true
+if echo "$out" | grep -q -- "--private-key"; then
+    echo "FAIL: deploy must not forward --private-key in keystore mode"; echo "$out"; exit 1
+fi
 echo "$out" | grep -q -- "PRIVATE_KEY_ENV=unset" \
     || { echo "FAIL: deploy must hide PRIVATE_KEY env in keystore mode"; echo "$out"; exit 1; }
 
@@ -331,31 +339,41 @@ echo "$out" | grep -q 'using PRIVATE_KEY for identity' \
 rm -rf "$PSY_HOME/keystore"
 
 # 7i. claim auto-fills --jobs-file from ./worker.backup and reads
-#     status/tx_hash from the result file.
+#     the L1 result from the result file.
 : > worker.backup
 out=$(PRIVATE_KEY=0xbeef "$repo_root/psyup" claim 2>&1)
 echo "$out" | grep -q 'psy_user_cli invoked: claim-rewards' \
     || { echo "FAIL: claim didn't invoke psy_user_cli correctly"; echo "$out"; exit 1; }
 echo "$out" | grep -q -- "--jobs-file ./worker.backup" \
     || { echo "FAIL: claim didn't auto-fill --jobs-file"; echo "$out"; exit 1; }
-echo "$out" | grep -q '✓ status: claimed' \
+echo "$out" | grep -q '✓ status: confirmed' \
     || { echo "FAIL: claim status not extracted"; echo "$out"; exit 1; }
-echo "$out" | grep -q '✓ tx_hash: claimtx123' \
-    || { echo "FAIL: claim tx_hash not extracted"; echo "$out"; exit 1; }
+echo "$out" | grep -q '✓ transaction_hash: claimtx123' \
+    || { echo "FAIL: claim transaction_hash not extracted"; echo "$out"; exit 1; }
+echo "$out" | grep -q '✓ chain_id: 11155111' \
+    || { echo "FAIL: claim chain_id not extracted"; echo "$out"; exit 1; }
+out=$(PRIVATE_KEY=0xbeef PSY_CLAIM_STATUS=proof_only PSY_CLAIM_HASH=null "$repo_root/psyup" claim 2>&1)
+echo "$out" | grep -q 'No L1 payout was confirmed' \
+    || { echo "FAIL: proof_only outcome not explained"; echo "$out"; exit 1; }
+if echo "$out" | grep -q 'transaction_hash:'; then
+    echo "FAIL: null transaction hash displayed"; echo "$out"; exit 1
+fi
 rm -f worker.backup
 
 # 7j. A missing default backup is not passed to claim-rewards.
 out=$(PRIVATE_KEY=0xbeef "$repo_root/psyup" claim 2>&1)
-echo "$out" | grep -q -- "--jobs-file" \
-    && { echo "FAIL: claim should not auto-fill a missing jobs file"; echo "$out"; exit 1; } || true
+if echo "$out" | grep -q -- "--jobs-file"; then
+    echo "FAIL: claim should not auto-fill a missing jobs file"; echo "$out"; exit 1
+fi
 
 # 7j2. user-supplied --jobs-file overrides auto-fill.
 : > worker.backup
 out=$(PRIVATE_KEY=0xbeef "$repo_root/psyup" claim --jobs-file custom.json 2>&1)
 echo "$out" | grep -q -- "--jobs-file custom.json" \
     || { echo "FAIL: user-supplied --jobs-file lost"; echo "$out"; exit 1; }
-echo "$out" | grep -q -- "--jobs-file ./worker.backup" \
-    && { echo "FAIL: claim should not auto-fill --jobs-file when user passes it"; echo "$out"; exit 1; } || true
+if echo "$out" | grep -q -- "--jobs-file ./worker.backup"; then
+    echo "FAIL: claim should not auto-fill --jobs-file when user passes it"; echo "$out"; exit 1
+fi
 rm -f worker.backup
 
 # 7k. KEYSTORE_PATH takes priority over PRIVATE_KEY for claim: forwards
@@ -368,8 +386,9 @@ echo "$out" | grep -q 'using keystore:' \
     || { echo "FAIL: claim should report keystore use"; echo "$out"; exit 1; }
 echo "$out" | grep -q -- "--keystore-path" \
     || { echo "FAIL: claim should forward --keystore-path when keystore present"; echo "$out"; exit 1; }
-echo "$out" | grep -q -- "--private-key" \
-    && { echo "FAIL: claim must not forward --private-key in keystore mode"; echo "$out"; exit 1; } || true
+if echo "$out" | grep -q -- "--private-key"; then
+    echo "FAIL: claim must not forward --private-key in keystore mode"; echo "$out"; exit 1
+fi
 echo "$out" | grep -q -- "PRIVATE_KEY_ENV=unset" \
     || { echo "FAIL: claim must hide PRIVATE_KEY env in keystore mode"; echo "$out"; exit 1; }
 rm -rf "$PSY_HOME/keystore"
@@ -436,8 +455,9 @@ grep -q 'active_compiler = "0.9.9"' "$install_home/settings.toml" \
     || { echo "FAIL: settings.toml active_compiler not updated"; cat "$install_home/settings.toml"; exit 1; }
 grep -q 'default_network = "sepolia"' "$install_home/settings.toml" \
     || { echo "FAIL: settings.toml default_network not updated"; cat "$install_home/settings.toml"; exit 1; }
-grep -q 'rpc_config' "$install_home/settings.toml" \
-    && { echo "FAIL: settings.toml should not contain rpc_config"; cat "$install_home/settings.toml"; exit 1; } || true
+if grep -q 'rpc_config' "$install_home/settings.toml"; then
+    echo "FAIL: settings.toml should not contain rpc_config"; cat "$install_home/settings.toml"; exit 1
+fi
 grep -q '"defaultNetwork": "sepolia"' "$install_home/config.json" \
     || { echo "FAIL: config.json defaultNetwork not updated"; cat "$install_home/config.json"; exit 1; }
 
@@ -503,8 +523,9 @@ fallback_out=$(
     PSYUP_RELEASE_URL_CONFIG="file://$fake_release/config.json" \
         "$repo_root/psyup" install latest 2>&1
 )
-echo "$fallback_out" | grep -q 'falling back' \
-    && { echo "FAIL: latest resolution hit fallback instead of redirect"; echo "$fallback_out"; exit 1; }
+if echo "$fallback_out" | grep -q 'falling back'; then
+    echo "FAIL: latest resolution hit fallback instead of redirect"; echo "$fallback_out"; exit 1
+fi
 grep -q 'active_node = "0.1.0"' "$fallback_home/settings.toml" \
     || { echo "FAIL: redirect-based latest resolution did not install 0.1.0"; cat "$fallback_home/settings.toml"; exit 1; }
 
@@ -586,8 +607,9 @@ for sign_type in zk secp256k1 eth-personal-secp256k1; do
             || { echo "FAIL: init wallet info sign type $sign_type ($existing)"; exit 1; }
         grep -q "register-user .*--sign-type $sign_type" "$call_log" \
             || { echo "FAIL: init registration sign type $sign_type ($existing)"; exit 1; }
-        grep -q 'creation-only' "$call_log" \
-            && { echo "FAIL: init queried creation identifier"; exit 1; } || true
+        if grep -q 'creation-only' "$call_log"; then
+            echo "FAIL: init queried creation identifier"; exit 1
+        fi
         grep -q 'get-user-id --pub-key 0d47fda4' "$call_log" \
             || { echo "FAIL: init did not query selected wallet identity"; exit 1; }
     done
@@ -623,8 +645,9 @@ echo "$worker_out" | grep -q -- "--user 42" \
     || { echo "FAIL: worker should pass --user 42"; echo "$worker_out"; exit 1; }
 echo "$worker_out" | grep -q -- "--completed-jobs-log-file ./worker.backup" \
     || { echo "FAIL: worker should default completed jobs log to ./worker.backup"; echo "$worker_out"; exit 1; }
-echo "$worker_out" | grep -q -- "--private-key" \
-    && { echo "FAIL: worker must not forward --private-key in keystore mode"; echo "$worker_out"; exit 1; } || true
+if echo "$worker_out" | grep -q -- "--private-key"; then
+    echo "FAIL: worker must not forward --private-key in keystore mode"; echo "$worker_out"; exit 1
+fi
 echo "$worker_out" | grep -q -- "PRIVATE_KEY_ENV=unset" \
     || { echo "FAIL: worker must hide PRIVATE_KEY env in keystore mode"; echo "$worker_out"; exit 1; }
 
@@ -634,7 +657,8 @@ worker_out=$(KEYSTORE_PATH="$worker_home/keystore/default" PRIVATE_KEY= WALLET_P
     "$repo_root/psyup" worker --completed-jobs-log-file custom.backup 2>&1) || true
 echo "$worker_out" | grep -q -- "--completed-jobs-log-file custom.backup" \
     || { echo "FAIL: worker should preserve explicit completed jobs log path"; echo "$worker_out"; exit 1; }
-echo "$worker_out" | grep -q -- "--completed-jobs-log-file ./worker.backup" \
-    && { echo "FAIL: worker should not add default completed jobs log when explicitly set"; echo "$worker_out"; exit 1; } || true
+if echo "$worker_out" | grep -q -- "--completed-jobs-log-file ./worker.backup"; then
+    echo "FAIL: worker should not add default completed jobs log when explicitly set"; echo "$worker_out"; exit 1
+fi
 
 echo "OK: all smoke checks passed"
