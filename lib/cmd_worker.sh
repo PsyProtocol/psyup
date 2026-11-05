@@ -40,8 +40,13 @@ PY
 cmd_worker() {
     require_structured_results
 
+    # --rpc-config / PSY_CONFIG_PATH (env passthrough)
+    if [ -z "${PSY_CONFIG_PATH:-}" ] && [ -f "$PSY_HOME/config.json" ]; then
+        export PSY_CONFIG_PATH="$PSY_HOME/config.json"
+    fi
+
     local keystore_file="${KEYSTORE_PATH:-}"
-    local rpc_config="$PSY_HOME/config.json"
+    local rpc_config="${PSY_CONFIG_PATH:-$PSY_HOME/config.json}"
     local user_id=""
     local has_keystore=0
     local has_private_key=0

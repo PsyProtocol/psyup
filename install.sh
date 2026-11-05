@@ -133,13 +133,13 @@ case ":${PATH}:" in
     *:"$HOME/.psy/bin":*) ;;
     *) export PATH="$HOME/.psy/bin:$PATH" ;;
 esac
-export RPC_CONFIG="$HOME/.psy/config.json"
+export PSY_CONFIG_PATH="$HOME/.psy/config.json"
 EOF
 
 cat > "$PSY_HOME/env.fish" <<'EOF'
 # psyup shell integration for fish.
 fish_add_path -a "$HOME/.psy/bin"
-set -gx RPC_CONFIG "$HOME/.psy/config.json"
+set -gx PSY_CONFIG_PATH "$HOME/.psy/config.json"
 EOF
 
 if [ ! -f "$PSY_HOME/settings.toml" ]; then

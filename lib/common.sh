@@ -132,7 +132,7 @@ query_user_id() {  # query_user_id <rpc_config> <public_key_hash>
     res=$(mktemp)
     # The result is read from $res; discard psy_user_cli's stdout (human logs,
     # incl. the private_key line) so it can't pollute this helper's return value.
-    RPC_CONFIG="$rpc_config" psy_user_cli --result-file "$res" get-user-id --pub-key "$public_key_hash" >/dev/null || rc=$?
+    PSY_CONFIG_PATH="$rpc_config" psy_user_cli --result-file "$res" get-user-id --pub-key "$public_key_hash" >/dev/null || rc=$?
     rc=${rc:-0}
     if [ "$rc" -eq 0 ]; then
         status=$(result_get "$res" status)

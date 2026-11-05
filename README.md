@@ -75,8 +75,8 @@ export PRIVATE_KEY=<your-hex-key>
 ├── toolchains/     # versioned by node release: psy-<node-ver>/{bin/, lib/psy-std/}
 ├── lib/            # psyup's own bash modules (installed by install.sh)
 ├── templates/      # cache (reserved, not used yet)
-├── env             # POSIX shell env: PATH + DARGO_STD_PATH + RPC_CONFIG
-├── env.fish        # fish shell env: PATH + DARGO_STD_PATH + RPC_CONFIG
+├── env             # POSIX shell env: PATH + DARGO_STD_PATH + PSY_CONFIG_PATH
+├── env.fish        # fish shell env: PATH + DARGO_STD_PATH + PSY_CONFIG_PATH
 ├── config.json     # RPC network config consumed by psy_user_cli (--rpc-config)
 └── settings.toml   # active node/compiler versions, default network
 ```
@@ -127,7 +127,7 @@ After `psyup install`, `~/.psy/env` is rewritten to export
 the stdlib without falling back to a git clone. `~/.psy/env.fish` is rewritten
 with the equivalent fish shell exports. The shell installer sources the matching
 env file from your shell rc. It also exports
-`RPC_CONFIG=~/.psy/config.json` for `psy_user_cli`. Runtime config at
+`PSY_CONFIG_PATH=~/.psy/config.json` for `psy_user_cli`. Runtime config at
 `~/.psy/config.json` is authoritative once present: `install.sh` installs it
 and `psyup install/update` never overwrites it. `psyup build` also sets
 `DARGO_STD_PATH` defensively in case the shell didn't source `~/.psy/env`.
@@ -147,7 +147,7 @@ https://raw.githubusercontent.com/PsyProtocol/psy-genesis/mainnet-beta/config.js
 Override with `PSY_GENESIS_REPO` / `PSY_GENESIS_BRANCH` (install.sh and
 `psyup install` both honor them). If the fetch fails and no local copy exists,
 `psyup install` continues without it; deploy then requires `--rpc-config` or
-`RPC_CONFIG`.
+`PSY_CONFIG_PATH`.
 
 ### `PsyProtocol/psy-template`
 

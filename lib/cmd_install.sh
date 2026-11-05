@@ -171,7 +171,7 @@ write_env_paths() {
             say "fetched config.json from $PSY_GENESIS_REPO ($PSY_GENESIS_BRANCH)"
         else
             warn "failed to fetch config.json from $genesis_url"
-            warn "  deploy will require --rpc-config or RPC_CONFIG"
+            warn "  deploy will require --rpc-config or PSY_CONFIG_PATH"
         fi
     fi
     if [ -f "$rpc_config" ]; then
@@ -185,28 +185,28 @@ write_env_paths() {
     awk -v std="$std_path" -v rpc="$rpc_config" -v have_rpc="$have_rpc_config" '
         /^# DARGO_STD_PATH=__PSYUP_MANAGED__/ { seen_std=1; print "export DARGO_STD_PATH=\"" std "\""; next }
         /^export DARGO_STD_PATH=/ { seen_std=1; print "export DARGO_STD_PATH=\"" std "\""; next }
-        /^# RPC_CONFIG=__PSYUP_MANAGED__/ {
+        /^# PSY_CONFIG_PATH=__PSYUP_MANAGED__/ {
             seen_rpc=1
-            if (have_rpc == 1) print "export RPC_CONFIG=\"" rpc "\""
+            if (have_rpc == 1) print "export PSY_CONFIG_PATH=\"" rpc "\""
             else print
             next
         }
-        /^export RPC_CONFIG=/ {
+        /^export PSY_CONFIG_PATH=/ {
             seen_rpc=1
-            if (have_rpc == 1) print "export RPC_CONFIG=\"" rpc "\""
+            if (have_rpc == 1) print "export PSY_CONFIG_PATH=\"" rpc "\""
             else print
             next
         }
         { print }
         END {
             if (seen_std != 1) print "export DARGO_STD_PATH=\"" std "\""
-            if (have_rpc == 1 && seen_rpc != 1) print "export RPC_CONFIG=\"" rpc "\""
+            if (have_rpc == 1 && seen_rpc != 1) print "export PSY_CONFIG_PATH=\"" rpc "\""
         }
     ' "$env_file" > "$tmpf" && mv "$tmpf" "$env_file"
 
     say "DARGO_STD_PATH -> $std_path"
     if [ "$have_rpc_config" -eq 1 ]; then
-        say "RPC_CONFIG -> $rpc_config"
+        say "PSY_CONFIG_PATH -> $rpc_config"
     fi
 
     {
@@ -214,7 +214,7 @@ write_env_paths() {
         printf 'fish_add_path -a "%s/bin"\n' "$PSY_HOME"
         printf 'set -gx DARGO_STD_PATH "%s"\n' "$std_path"
         if [ "$have_rpc_config" -eq 1 ]; then
-            printf 'set -gx RPC_CONFIG "%s"\n' "$rpc_config"
+            printf 'set -gx PSY_CONFIG_PATH "%s"\n' "$rpc_config"
         fi
     } > "$fish_env_file"
 }

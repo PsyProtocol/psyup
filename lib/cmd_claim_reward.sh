@@ -1,7 +1,7 @@
 # psyup claim — claim miner rewards via `psy_user_cli claim-rewards`
 #
 # Auto-fills (when not already set on CLI):
-#   --rpc-config     ← RPC_CONFIG env, or $PSY_HOME/config.json
+#   --rpc-config     ← PSY_CONFIG_PATH env, or $PSY_HOME/config.json
 #   --jobs-file      ← ./worker.backup
 #
 # Wallet source (resolved in this order, any explicit user arg wins):
@@ -28,9 +28,9 @@ cmd_claim_reward() {
         || die "psy_user_cli not found in PATH (run 'psyup install' first)"
     require_structured_results
 
-    # --rpc-config / RPC_CONFIG (env passthrough)
-    if [ -z "${RPC_CONFIG:-}" ] && [ -f "$PSY_HOME/config.json" ]; then
-        export RPC_CONFIG="$PSY_HOME/config.json"
+    # --rpc-config / PSY_CONFIG_PATH (env passthrough)
+    if [ -z "${PSY_CONFIG_PATH:-}" ] && [ -f "$PSY_HOME/config.json" ]; then
+        export PSY_CONFIG_PATH="$PSY_HOME/config.json"
     fi
 
     # Wallet source resolution. claim-rewards takes the same WalletSourceArgs

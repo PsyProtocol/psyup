@@ -9,7 +9,7 @@ trap 'rm -rf "$work"' EXIT
 
 export PSY_HOME="$work/.psy"
 export PATH="$work/bin:$PATH"
-unset DARGO_STD_PATH RPC_CONFIG
+unset DARGO_STD_PATH PSY_CONFIG_PATH
 mkdir -p "$work/bin" "$PSY_HOME"
 
 # 1. dispatcher loads
@@ -99,7 +99,7 @@ set -- "${new[@]}"
 
 [ -z "${PSY_USER_CLI_CALL_LOG:-}" ] || printf '%s\n' "$*" >> "$PSY_USER_CLI_CALL_LOG"
 
-echo "psy_user_cli invoked: $* RPC_CONFIG=${RPC_CONFIG:-unset} PRIVATE_KEY_ENV=${PRIVATE_KEY:-unset}"
+echo "psy_user_cli invoked: $* PSY_CONFIG_PATH=${PSY_CONFIG_PATH:-unset} PRIVATE_KEY_ENV=${PRIVATE_KEY:-unset}"
 
 # Write the structured result (--result-file), unless the caller asked us to
 # simulate a toolchain that doesn't write one (protocol-error test).
@@ -247,8 +247,8 @@ echo "$override_out" | grep -q 'detected contract:' \
 out=$(PRIVATE_KEY=0xdead "$repo_root/psyup" deploy --contract-path build/main.psyc 2>&1)
 echo "$out" | grep -q 'psy_user_cli invoked: deploy-contract --is-deploy' \
     || { echo "FAIL: deploy didn't invoke psy_user_cli correctly"; echo "$out"; exit 1; }
-echo "$out" | grep -q "RPC_CONFIG=$PSY_HOME/config.json" \
-    || { echo "FAIL: deploy didn't export RPC_CONFIG"; echo "$out"; exit 1; }
+echo "$out" | grep -q "PSY_CONFIG_PATH=$PSY_HOME/config.json" \
+    || { echo "FAIL: deploy didn't export PSY_CONFIG_PATH"; echo "$out"; exit 1; }
 echo "$out" | grep -q -- "--contract-path build/main.psyc" \
     || { echo "FAIL: --contract-path passthrough lost"; exit 1; }
 echo "$out" | grep -q -- "--abi-path" \
@@ -444,12 +444,12 @@ grep -q '"defaultNetwork": "sepolia"' "$install_home/config.json" \
 # env file should have DARGO_STD_PATH pointing at the installed std
 grep -q "DARGO_STD_PATH=.*psy-0.9.9/lib/psy-std/std.psy" "$install_home/env" \
     || { echo "FAIL: ~/.psy/env DARGO_STD_PATH not rewritten"; cat "$install_home/env"; exit 1; }
-grep -q "RPC_CONFIG=\"$install_home/config.json\"" "$install_home/env" \
-    || { echo "FAIL: ~/.psy/env RPC_CONFIG not rewritten"; cat "$install_home/env"; exit 1; }
+grep -q "PSY_CONFIG_PATH=\"$install_home/config.json\"" "$install_home/env" \
+    || { echo "FAIL: ~/.psy/env PSY_CONFIG_PATH not rewritten"; cat "$install_home/env"; exit 1; }
 grep -q "DARGO_STD_PATH \"$install_home/toolchains/psy-0.9.9/lib/psy-std/std.psy\"" "$install_home/env.fish" \
     || { echo "FAIL: ~/.psy/env.fish DARGO_STD_PATH not rewritten"; cat "$install_home/env.fish"; exit 1; }
-grep -q "RPC_CONFIG \"$install_home/config.json\"" "$install_home/env.fish" \
-    || { echo "FAIL: ~/.psy/env.fish RPC_CONFIG not rewritten"; cat "$install_home/env.fish"; exit 1; }
+grep -q "PSY_CONFIG_PATH \"$install_home/config.json\"" "$install_home/env.fish" \
+    || { echo "FAIL: ~/.psy/env.fish PSY_CONFIG_PATH not rewritten"; cat "$install_home/env.fish"; exit 1; }
 
 # 9b. Latest resolution follows the public GitHub redirect and does not touch the rate-limited API.
 PSYUP_FAKE_TOOLCHAIN_DIR="$fake_release" bash "$repo_root/packaging/make-fake-toolchain.sh" 0.1.0 >/dev/null

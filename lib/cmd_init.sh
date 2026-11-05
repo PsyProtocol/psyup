@@ -90,9 +90,14 @@ cmd_init() {
 
     require_structured_results
 
+    # --rpc-config / PSY_CONFIG_PATH (env passthrough)
+    if [ -z "${PSY_CONFIG_PATH:-}" ] && [ -f "$PSY_HOME/config.json" ]; then
+        export PSY_CONFIG_PATH="$PSY_HOME/config.json"
+    fi
+
     local keystore_dir="$PSY_HOME/keystore"
     local keystore_file="$keystore_dir/default"
-    local rpc_config="$PSY_HOME/config.json"
+    local rpc_config="${PSY_CONFIG_PATH:-$PSY_HOME/config.json}"
 
     # --- Case 1: keystore already exists ---
     if [ -f "$keystore_file" ]; then

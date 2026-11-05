@@ -1,7 +1,7 @@
 # psyup deploy — wraps `psy_user_cli deploy-contract` for the current project.
 #
 # Auto-fills (when not already set on CLI):
-#   --rpc-config     ← RPC_CONFIG env, or $PSY_HOME/config.json
+#   --rpc-config     ← PSY_CONFIG_PATH env, or $PSY_HOME/config.json
 #   --contract-path  ← ./target/<package>.json, ./<package>.json, or ./build/<package>.json
 #   --is-deploy      always added
 #
@@ -54,9 +54,9 @@ cmd_deploy() {
         || die "psy_user_cli not found in PATH (run 'psyup install' first)"
     require_structured_results
 
-    # --rpc-config / RPC_CONFIG (env passthrough)
-    if [ -z "${RPC_CONFIG:-}" ] && [ -f "$PSY_HOME/config.json" ]; then
-        export RPC_CONFIG="$PSY_HOME/config.json"
+    # --rpc-config / PSY_CONFIG_PATH (env passthrough)
+    if [ -z "${PSY_CONFIG_PATH:-}" ] && [ -f "$PSY_HOME/config.json" ]; then
+        export PSY_CONFIG_PATH="$PSY_HOME/config.json"
     fi
 
     # Wallet source resolution. deploy-contract takes the same WalletSourceArgs
@@ -169,12 +169,12 @@ cmd_deploy() {
     exit "$rc"
 }
 
-# Resolve api_services_url from $RPC_CONFIG, then GET /v1/get/contract?contract_uuid=<uuid>
+# Resolve api_services_url from $PSY_CONFIG_PATH, then GET /v1/get/contract?contract_uuid=<uuid>
 # and pull contract_id from the JSON response. Prints the id on stdout or
 # nothing on failure (always returns 0 to keep deploy non-fatal).
 lookup_contract_id() {
     local uuid=$1
-    local cfg=${RPC_CONFIG:-$PSY_HOME/config.json}
+    local cfg=${PSY_CONFIG_PATH:-$PSY_HOME/config.json}
     [ -f "$cfg" ] || return 0
     command -v python3 >/dev/null 2>&1 || return 0
     command -v curl >/dev/null 2>&1 || return 0
