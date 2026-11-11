@@ -6,9 +6,9 @@ Inspired by `rustup` / `foundryup`.
 ## End-to-end quickstart
 
 ```sh
-# 1. Install psyup itself (pins the network to sepolia).
+# 1. Install psyup itself (pins the Psy network to testnet).
 curl -fsSL https://raw.githubusercontent.com/PsyProtocol/psyup/mainnet-beta/install.sh \
-  | PSYUP_DEFAULT_NETWORK=sepolia sh
+  | PSYUP_DEFAULT_NETWORK=testnet bash
 # (no need to source — install.sh auto-writes your shell rc)
 
 # 2. Pull the PSY toolchain (dargo + psy_user_cli + ...) for your platform.
@@ -152,6 +152,8 @@ and `psyup install/update` never overwrites it. `psyup build` also sets
 Set `PSYUP_DEFAULT_NETWORK=<name>` before running `install.sh` or
 `psyup install` to choose the default network; otherwise it defaults to
 `localhost`.
+Use `testnet` for the public Psy test network. `sepolia` names an external
+Ethereum test chain, not a Psy network key in the current configuration.
 
 ### `PsyProtocol/psy-genesis`
 
