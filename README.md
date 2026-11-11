@@ -9,7 +9,8 @@ Inspired by `rustup` / `foundryup`.
 # 1. Install psyup itself (pins the Psy network to testnet).
 curl -fsSL https://raw.githubusercontent.com/PsyProtocol/psyup/mainnet-beta/install.sh \
   | PSYUP_DEFAULT_NETWORK=testnet bash
-# (no need to source — install.sh auto-writes your shell rc)
+# Load PATH into this terminal; install.sh also configures future terminals.
+. "$HOME/.psy/env"
 
 # 2. Pull the PSY toolchain (dargo + psy_user_cli + ...) for your platform.
 psyup install
@@ -19,6 +20,8 @@ psyup new token-app
 
 # 4. Compile the contract.
 cd token-app/contract && psyup build
+# Check the generated compilation artifact and ABI.
+ls -lh target/token_app.json target/token_app.abi.json
 
 # 5. Deploy.
 export PRIVATE_KEY=<your-hex-key>
