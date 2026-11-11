@@ -94,6 +94,9 @@ cmd_build() {
     [ -f Dargo.toml ] \
         || die "no Dargo.toml in current directory (run 'psyup new <name>' first)"
 
+    # A failed/retried build must never retain a previous success certificate.
+    rm -f .psy-build-manifest || die "cannot invalidate previous build manifest"
+
     command -v dargo >/dev/null 2>&1 \
         || die "dargo not found in PATH (run 'psyup install' first)"
 
@@ -116,6 +119,18 @@ cmd_build() {
             set -- --contract-name="$name" "$@"
         fi
     fi
+
+    local source_before="" source_after="" automatic_build=1 manifest_tmp artifact digest
+    for arg in "$@"; do
+        case "$arg" in
+            --entry-path|--entry-path=*|--target-dir|--target-dir=*|--program-dir|--program-dir=*|--debug|--debug=*) automatic_build=0 ;;
+        esac
+    done
+    # An entry outside this package is not covered by the package snapshot.
+    case "/$(contract_entry_file)/" in
+        *'/../'*|//*) automatic_build=0 ;;
+    esac
+    source_before=$(project_source_snapshot) || automatic_build=0
 
     entry_path=$(arg_value --entry-path "$@" || true)
     target_dir=$(arg_value --target-dir "$@" || true)
@@ -149,4 +164,22 @@ cmd_build() {
     fi
 
     dargo generate-abi "${abi_args[@]}"
+
+    artifact="target/$package_name.json"
+    source_after=$(project_source_snapshot) || automatic_build=0
+    if [ "$automatic_build" -eq 1 ] && [ -f "$artifact" ] && \
+        [ "$source_before" = "$source_after" ]; then
+        manifest_tmp=$(mktemp .psy-build-manifest.XXXXXX) || die "cannot create build manifest"
+        # Reuse the checked snapshot; recapturing here could certify an edit
+        # made after the before/after comparison against the old artifact.
+        if digest=$(build_file_digest "$artifact") && \
+            printf '%s\nartifact %s  %s\n' "$source_after" "$digest" "$artifact" > "$manifest_tmp"; then
+            mv -f "$manifest_tmp" .psy-build-manifest || die "cannot save build manifest"
+        else
+            rm -f "$manifest_tmp"
+            warn "build freshness could not be recorded; automatic deploy requires another 'psyup build'"
+        fi
+    else
+        warn "automatic deploy freshness not recorded (changed sources, custom paths/debug, or missing artifact); rebuild normally or explicitly select --contract-path"
+    fi
 }

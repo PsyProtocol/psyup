@@ -49,7 +49,9 @@ mkdir -p "$PSY_HOME/toolchains/psy-0.0.0/bin" \
 cat > "$PSY_HOME/toolchains/psy-0.0.0/bin/dargo" <<'EOF'
 #!/usr/bin/env bash
 if [ "$1" = "compile" ]; then
-    mkdir -p build && : > build/main.psyc
+    mkdir -p build target && : > build/main.psyc
+    package=$(awk -F'"' '/^name[[:space:]]*=/ {print $2; exit}' Dargo.toml)
+    printf '{"fixture":"compiled"}\n' > "target/$package.json"
     echo "dargo: built build/main.psyc DARGO_STD_PATH=${DARGO_STD_PATH:-unset} args=$*"
     exit 0
 fi
@@ -267,6 +269,8 @@ cat > Dargo.toml <<'EOF'
 name = "token"
 type = "bin"
 EOF
+# Auto selection requires a successful build of this exact package/source set.
+"$repo_root/psyup" build >/dev/null
 out=$(PRIVATE_KEY=0xbeef "$repo_root/psyup" deploy 2>&1)
 echo "$out" | grep -q -- "--contract-path target/token.json" \
     || { echo "FAIL: --contract-path not auto-filled from target/"; echo "$out"; exit 1; }

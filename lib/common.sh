@@ -142,3 +142,53 @@ query_user_id() {  # query_user_id <rpc_config> <public_key_hash>
     printf '%s\t%s\n' "${status:-}" "${user_id:-}"
     return "$rc"
 }
+
+# Automatic deploy provenance is deliberately package-local. External dependency
+# trees (including compiler-resolved std/git dependencies) are not a lockfile.
+# Keep this in common.sh, which is already installed with both commands.
+project_source_snapshot() (
+    local paths records path digest
+    paths=$(mktemp) || exit 1
+    records=$(mktemp) || { rm -f "$paths"; exit 1; }
+    trap 'rm -f "$paths" "$records"' EXIT
+    find . \( -type d \( -name .git -o -name target -o -name build -o -name node_modules \) -prune \) -o \
+        \( -type l -o -type f \( -name '*.psy' -o -name Dargo.toml -o -name Dargo.lock \) \) -print0 > "$paths" || exit 1
+    while IFS= read -r -d '' path; do
+        # Directory symlinks could hide untracked sources; don't certify them.
+        [ ! -L "$path" ] || exit 1
+        case "$path" in *$'\n'*|*$'\r'*) exit 1 ;; esac
+        digest=$(build_file_digest "$path") || exit 1
+        printf '%s  %s\n' "$digest" "$path" >> "$records" || exit 1
+    done < "$paths"
+    printf 'psyup-package-sources-v1\n'
+    LC_ALL=C sort "$records"
+)
+
+build_file_digest() {
+    local digest
+    if command -v sha256sum >/dev/null 2>&1; then
+        digest=$(sha256sum < "$1") || return 1
+    elif command -v shasum >/dev/null 2>&1; then
+        digest=$(shasum -a 256 < "$1") || return 1
+    else
+        return 1
+    fi
+    printf '%s\n' "${digest%% *}"
+}
+
+automatic_build_manifest() {
+    local artifact=$1 digest
+    [ -f "$artifact" ] || return 1
+    project_source_snapshot || return 1
+    digest=$(build_file_digest "$artifact") || return 1
+    printf 'artifact %s  %s\n' "$digest" "$artifact"
+}
+
+require_current_build_artifact() (
+    local candidate
+    [ -f .psy-build-manifest ] || exit 1
+    candidate=$(mktemp) || exit 1
+    trap 'rm -f "$candidate"' EXIT
+    automatic_build_manifest "$1" > "$candidate" || exit 1
+    cmp -s .psy-build-manifest "$candidate"
+)

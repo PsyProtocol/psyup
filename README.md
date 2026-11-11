@@ -88,6 +88,21 @@ unset KEYSTORE_PATH
 export PRIVATE_KEY=<your-hex-key>
 ```
 
+
+Automatic `psyup deploy` selection requires a fresh `.psy-build-manifest` from a
+successful `psyup build` in the contract directory. Editing, adding, or removing
+package `.psy` sources, changing `Dargo.toml`/`Dargo.lock`, replacing the compiled
+artifact, or attempting a failed build requires another successful build before
+automatic deployment. Build outputs (`target/`, `build/`), `.git/`, and
+`node_modules/` are excluded from the source snapshot.
+
+This check covers files inside the current package. External local-path, git,
+transitive and standard-library dependencies are not fully tracked; rebuild after
+changing those dependencies. Builds with custom entry/program/target paths,
+debug output, or source symlinks do not create an automatic-selection manifest.
+Explicit `--contract-path <file>` keeps the existing user-selected artifact
+behavior and bypasses freshness checks.
+
 ## Layout
 
 ```

@@ -102,6 +102,8 @@ cmd_deploy() {
         if [ -z "$pkg" ]; then
             warn "could not read package name from Dargo.toml; skipping --contract-path auto-fill"
         elif artifact=$(locate_contract_artifact "$pkg"); then
+            require_current_build_artifact "$artifact" \
+                || die "automatic deploy blocked: source or artifact is stale, or no successful build manifest exists — run 'psyup build' again (explicit --contract-path selects an artifact without freshness checks)"
             say "using --contract-path=$artifact"
             set -- --contract-path "$artifact" "$@"
         else
