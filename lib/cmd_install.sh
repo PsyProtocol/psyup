@@ -309,16 +309,12 @@ set_config_default_network() {
 }
 
 resolve_versions() {
-    # Fills NODE_VERSION / COMPILER_VERSION. A pinned value from settings.toml
-    # wins; otherwise resolve latest from each repo's releases.
-    NODE_VERSION=$(resolve_latest_version "$PSY_NODE_REPO") || {
-        warn "failed to resolve latest ${PSY_NODE_REPO} version; falling back to ${PSYUP_DEFAULT_VERSION:-0.1.0}"
-        NODE_VERSION="${PSYUP_DEFAULT_VERSION:-0.1.0}"
-    }
-    COMPILER_VERSION=$(resolve_latest_version "$PSY_COMPILER_REPO") || {
-        warn "failed to resolve latest ${PSY_COMPILER_REPO} version; falling back to ${NODE_VERSION}"
-        COMPILER_VERSION="$NODE_VERSION"
-    }
+    # Resolve each component independently. A lookup failure is not evidence
+    # that an old release or the other component's version is compatible.
+    NODE_VERSION=$(resolve_latest_version "$PSY_NODE_REPO") ||
+        die "failed to resolve latest $PSY_NODE_REPO release; retry when GitHub is reachable or run psyup install <version> with a known compatible release"
+    COMPILER_VERSION=$(resolve_latest_version "$PSY_COMPILER_REPO") ||
+        die "failed to resolve latest $PSY_COMPILER_REPO release; retry when GitHub is reachable or run psyup install <version> with a known compatible release"
 }
 
 cmd_install() {
