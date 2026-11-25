@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -25,7 +26,13 @@ class ArtifactIntegrity(unittest.TestCase):
         self.work = Path(self.temp.name)
         (self.work / 'bin').mkdir()
         (self.work / 'src').mkdir()
-        (self.work / 'psy-home').mkdir()
+        self.home = Path(tempfile.mkdtemp(prefix='qa139-home-'))
+        self.addCleanup(lambda: shutil.rmtree(self.home, ignore_errors=True))
+        std_dir = self.home / 'toolchains/psy-test/lib/psy-std'
+        std_dir.mkdir(parents=True)
+        (std_dir / 'std.psy').write_text('// std\n')
+        (std_dir / 'prelude.psy').write_text('// prelude\n')
+        (self.home / 'settings.toml').write_text('active_node = "test"\n')
         (self.work / 'Dargo.toml').write_text('name = "demo"\nentry = "src/main.psy"\n')
         (self.work / 'src/main.psy').write_text('#[contract]\npub struct Demo {}\n')
         self.cli_calls = self.work / 'cli-calls.txt'
@@ -55,7 +62,17 @@ if [ "$1" = --help ]; then
     printf 'fixture CLI supports --result-file\\n'
     exit 0
 fi
+if [ "${QA139_SWAP_TARGET:-0}" = 1 ]; then
+    printf '{"fixture":"swapped after selection"}\\n' > target/demo.json
+fi
 printf '%s\\n' "$@" > "$QA139_CLI_CALLS"
+prev=""
+for arg in "$@"; do
+    if [ "$prev" = "--contract-path" ]; then
+        /usr/bin/shasum -a 256 "$arg" >> "$QA139_CLI_CALLS"
+    fi
+    prev=$arg
+done
 exit 42
 ''',
             # Defensive guards: neither the controlled compiler nor CLI may network.
@@ -68,7 +85,7 @@ exit 42
             path.chmod(0o755)
         self.env = {
             'PATH': f'{self.work / "bin"}:/usr/bin:/bin',
-            'PSY_HOME': str(self.work / 'psy-home'),
+            'PSY_HOME': str(self.home),
             'PSYUP_LIB': str(LIB),
             'QA139_CLI_CALLS': str(self.cli_calls),
         }
@@ -104,7 +121,10 @@ exit 42
         self.build()
         result = self.deploy()
         self.assertEqual(result.returncode, 42, result.stdout + result.stderr)
-        self.assertIn('target/demo.json', self.cli_calls.read_text())
+        self.assertIn('selection-kind=automatic source=target/demo.json', result.stdout)
+        observed = self.cli_calls.read_text()
+        self.assertNotIn('target/demo.json', observed)
+        self.assertIn(hashlib.sha256((self.work / 'target/demo.json').read_bytes()).hexdigest(), observed)
         self.assertTrue((self.work / '.psy-build-manifest').is_file())
 
     def test_missing_artifact_blocks_without_cli_invocation(self):
@@ -118,6 +138,8 @@ exit 42
         result = self.deploy('--contract-path', 'explicit.json')
         self.assertEqual(result.returncode, 42, result.stdout + result.stderr)
         self.assertIn('explicit.json', self.cli_calls.read_text())
+        self.assertIn('selection-kind=explicit source=explicit.json', result.stdout)
+        self.assertNotIn('selection-kind=automatic', result.stdout)
 
 
     def assert_auto_blocked(self):
@@ -180,6 +202,100 @@ exit 42
         self.assertFalse((self.work / '.psy-build-manifest').exists())
         self.assert_auto_blocked()
 
+    def test_restore_after_failed_rebuild_can_certify_again(self):
+        self.build()
+        original = (self.work / 'src/main.psy').read_text()
+        (self.work / 'src/main.psy').write_text('INVALID\n')
+        failed = self.run_psyup('build')
+        self.assertEqual(failed.returncode, 1, failed.stdout + failed.stderr)
+        self.assert_auto_blocked()
+        (self.work / 'src/main.psy').write_text(original)
+        self.build()
+        result = self.deploy()
+        self.assertEqual(result.returncode, 42, result.stdout + result.stderr)
+        self.assertIn('selection-kind=automatic source=target/demo.json', result.stdout)
+
+    def test_std_change_and_loss_block_automatic_deploy(self):
+        self.build()
+        std = self.home / 'toolchains/psy-test/lib/psy-std/std.psy'
+        prelude = self.home / 'toolchains/psy-test/lib/psy-std/prelude.psy'
+        prelude.write_text('// prelude changed\n')
+        self.assert_auto_blocked()
+        self.build()
+        std.unlink()
+        self.assert_auto_blocked()
+
+    def test_external_and_transitive_dependency_change_and_loss_block(self):
+        helper = Path(tempfile.mkdtemp(prefix='qa139-helper-'))
+        nested = Path(tempfile.mkdtemp(prefix='qa139-nested-'))
+        self.addCleanup(lambda: shutil.rmtree(helper, ignore_errors=True))
+        self.addCleanup(lambda: shutil.rmtree(nested, ignore_errors=True))
+        (helper / 'lib.psy').write_text('// helper\n')
+        (helper / 'Dargo.toml').write_text(
+            'name = "helper"\n[dependencies]\nmore = { path = "%s" }\n' % nested)
+        (nested / 'leaf.psy').write_text('// leaf\n')
+        (self.work / 'Dargo.toml').write_text(
+            'name = "demo"\nentry = "src/main.psy"\n'
+            '[dependencies]\nhelper = { path = "%s" }\n' % helper)
+        self.build()
+        (nested / 'leaf.psy').write_text('// leaf changed\n')
+        self.assert_auto_blocked()
+        self.build()
+        shutil.rmtree(nested)
+        self.assert_auto_blocked()
+
+    def test_git_dependency_is_not_automatically_certified(self):
+        (self.work / 'Dargo.toml').write_text(
+            'name = "demo"\nentry = "src/main.psy"\n'
+            '[dependencies]\nremote = { git = "https://example.invalid/dep.git" }\n')
+        built = self.run_psyup('build')
+        self.assertEqual(built.returncode, 0, built.stdout + built.stderr)
+        self.assertFalse((self.work / '.psy-build-manifest').exists())
+        self.assert_auto_blocked()
+
+    def test_symlinked_external_dependency_is_not_certified(self):
+        helper = Path(tempfile.mkdtemp(prefix='qa139-helper-'))
+        link_dir = Path(tempfile.mkdtemp(prefix='qa139-link-'))
+        self.addCleanup(lambda: shutil.rmtree(helper, ignore_errors=True))
+        self.addCleanup(lambda: shutil.rmtree(link_dir, ignore_errors=True))
+        (helper / 'lib.psy').write_text('// helper\n')
+        link = link_dir / 'dep'
+        link.symlink_to(helper, target_is_directory=True)
+        (self.work / 'Dargo.toml').write_text(
+            'name = "demo"\nentry = "src/main.psy"\n'
+            '[dependencies]\nhelper = { path = "%s" }\n' % link)
+        built = self.run_psyup('build')
+        self.assertEqual(built.returncode, 0, built.stdout + built.stderr)
+        self.assertFalse((self.work / '.psy-build-manifest').exists())
+        self.assert_auto_blocked()
+
+    def test_symlink_source_is_not_automatically_certified(self):
+        real = self.work / 'real.psy'
+        real.write_text('#[contract]\npub struct Demo {}\n')
+        (self.work / 'src/main.psy').unlink()
+        (self.work / 'src/main.psy').symlink_to(real)
+        built = self.run_psyup('build')
+        self.assertEqual(built.returncode, 0, built.stdout + built.stderr)
+        self.assertFalse((self.work / '.psy-build-manifest').exists())
+        self.assert_auto_blocked()
+        explicit = self.deploy('--contract-path', 'target/demo.json')
+        self.assertEqual(explicit.returncode, 42, explicit.stdout + explicit.stderr)
+        self.assertIn('selection-kind=explicit source=target/demo.json', explicit.stdout)
+        self.assertNotIn('selection-kind=automatic', explicit.stdout)
+
+    def test_consumer_cannot_swap_the_automatic_artifact_after_selection(self):
+        self.build()
+        original = hashlib.sha256((self.work / 'target/demo.json').read_bytes()).hexdigest()
+        self.env['QA139_SWAP_TARGET'] = '1'
+        result = self.deploy()
+        self.assertEqual(result.returncode, 42, result.stdout + result.stderr)
+        self.assertIn('selection-kind=automatic source=target/demo.json', result.stdout)
+        observed = self.cli_calls.read_text()
+        self.assertNotIn('target/demo.json', observed)
+        self.assertIn(original, observed)
+        self.assertNotEqual((self.work / 'target/demo.json').read_text(),
+                            '{"fixture":"original contract"}\n')
+
     def test_ignored_generated_files_do_not_invalidate_success(self):
         self.build()
         (self.work / 'target/generated.psy').write_text('// generated\n')
@@ -202,7 +318,10 @@ exit 42
         self.assertTrue((self.work / '.psy-build-manifest').is_file())
         result = self.deploy()
         self.assertEqual(result.returncode, 42, result.stdout + result.stderr)
-        self.assertIn('target/demo.json', self.cli_calls.read_text())
+        self.assertIn('selection-kind=automatic source=target/demo.json', result.stdout)
+        observed = self.cli_calls.read_text()
+        self.assertNotIn('target/demo.json', observed)
+        self.assertIn(hashlib.sha256((self.work / 'target/demo.json').read_bytes()).hexdigest(), observed)
 
 
 if __name__ == '__main__':

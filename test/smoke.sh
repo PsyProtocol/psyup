@@ -272,8 +272,15 @@ EOF
 # Auto selection requires a successful build of this exact package/source set.
 "$repo_root/psyup" build >/dev/null
 out=$(PRIVATE_KEY=0xbeef "$repo_root/psyup" deploy 2>&1)
-echo "$out" | grep -q -- "--contract-path target/token.json" \
-    || { echo "FAIL: --contract-path not auto-filled from target/"; echo "$out"; exit 1; }
+echo "$out" | grep -F -q "selection-kind=automatic source=target/token.json" \
+    || { echo "FAIL: automatic selection did not name target/token.json"; echo "$out"; exit 1; }
+selected_digest=$(printf '%s\n' "$out" | sed -n 's/.*selection-kind=automatic source=target\/token.json digest=\([0-9a-f][0-9a-f]*\).*/\1/p' | head -1)
+actual_digest=$(shasum -a 256 target/token.json | awk '{print $1}')
+[ -n "$selected_digest" ] && [ "$selected_digest" = "$actual_digest" ] \
+    || { echo "FAIL: automatic selection digest does not match target/token.json"; echo "$out"; exit 1; }
+cli_path=$(printf '%s\n' "$out" | sed -n 's/.*psy_user_cli invoked:.*--contract-path \([^ ]*\).*/\1/p' | head -1)
+[ -n "$cli_path" ] && [ "$cli_path" != "target/token.json" ] \
+    || { echo "FAIL: automatic deploy passed the live artifact path to the CLI"; echo "$out"; exit 1; }
 if echo "$out" | grep -q -- "--abi-path"; then
     echo "FAIL: deploy must use ABI embedded in target/token.json"; echo "$out"; exit 1
 fi

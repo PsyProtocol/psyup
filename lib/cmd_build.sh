@@ -1,22 +1,5 @@
 # psyup build — wraps `dargo compile` and `dargo generate-abi` in the current project.
 
-# Find the active toolchain's bundled psy-std and export DARGO_STD_PATH so
-# the compiler doesn't have to fall back to git. Duplicates ~/.psy/env so
-# `psyup build` works even from a shell that hasn't sourced env.
-ensure_dargo_std_path() {
-    [ -n "${DARGO_STD_PATH:-}" ] && return 0
-
-    local active std_path
-    active=$(settings_get active_node)
-    [ -n "$active" ] || active=$(settings_get active)
-    [ -n "$active" ] || return 0
-
-    std_path="$PSY_HOME/toolchains/psy-${active}/lib/psy-std/std.psy"
-    if [ -f "$std_path" ]; then
-        export DARGO_STD_PATH="$std_path"
-    fi
-}
-
 # Read `entry = "..."` from Dargo.toml, falling back to src/main.psy.
 contract_entry_file() {
     local entry
