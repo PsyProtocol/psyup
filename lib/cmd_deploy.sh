@@ -48,6 +48,20 @@ has_flag() {
     return 1
 }
 
+explicit_contract_path() {
+    local prev="" arg
+    for arg in "$@"; do
+        case "$prev" in
+            --contract-path) printf '%s\n' "$arg"; return 0 ;;
+        esac
+        case "$arg" in
+            --contract-path=*) printf '%s\n' "${arg#--contract-path=}"; return 0 ;;
+        esac
+        prev=$arg
+    done
+    return 1
+}
+
 cmd_deploy() {
     [ -f Dargo.toml ] || die "no Dargo.toml in current directory"
     command -v psy_user_cli >/dev/null 2>&1 \
@@ -93,7 +107,7 @@ cmd_deploy() {
         die "no wallet configured; set KEYSTORE_PATH (and WALLET_PASSWORD) or PRIVATE_KEY"
     fi
 
-    local pkg=""
+    local pkg="" pinned=""
 
     # --contract-path auto-fill from build output
     if ! has_flag --contract-path "$@"; then
@@ -102,11 +116,22 @@ cmd_deploy() {
         if [ -z "$pkg" ]; then
             warn "could not read package name from Dargo.toml; skipping --contract-path auto-fill"
         elif artifact=$(locate_contract_artifact "$pkg"); then
+            pinned=$(mktemp "${TMPDIR:-/tmp}/psyup-artifact.XXXXXX") \
+                || die "automatic deploy blocked: cannot pin certified artifact"
+            cp "$artifact" "$pinned" \
+                || die "automatic deploy blocked: cannot pin certified artifact"
+            require_pinned_build_artifact "$pinned" "$artifact" \
+                || { rm -f "$pinned"; die "automatic deploy blocked: source or artifact is stale, or no successful build manifest exists — run 'psyup build' again (explicit --contract-path selects an artifact without freshness checks)"; }
+            say "selection-kind=automatic source=$artifact digest=$(build_file_digest "$pinned")"
             say "using --contract-path=$artifact"
-            set -- --contract-path "$artifact" "$@"
+            set -- --contract-path "$pinned" "$@"
         else
             die "compiled artifact not found (looked for target/$pkg.json, $pkg.json, build/$pkg.json) — run 'psyup build' first"
         fi
+    else
+        local explicit_path
+        explicit_path=$(explicit_contract_path "$@") || explicit_path="(unparsed)"
+        say "selection-kind=explicit source=$explicit_path"
     fi
 
     # Run psy_user_cli; it streams human logs to the terminal and writes the
@@ -128,6 +153,9 @@ cmd_deploy() {
         ${credential_args[@]+"${credential_args[@]}"} "$@"
     local rc=$?
     set -e
+    if [ -n "$pinned" ]; then
+        rm -f "$pinned"
+    fi
     # Clear any exported wallet password now that deploy-contract has returned.
     unset WALLET_PASSWORD 2>/dev/null || true
 

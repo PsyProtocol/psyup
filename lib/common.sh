@@ -142,3 +142,171 @@ query_user_id() {  # query_user_id <rpc_config> <public_key_hash>
     printf '%s\t%s\n' "${status:-}" "${user_id:-}"
     return "$rc"
 }
+
+# Find the active toolchain's bundled psy-std and export DARGO_STD_PATH so
+# the compiler doesn't have to fall back to git. Duplicates ~/.psy/env so
+# `psyup build` works even from a shell that hasn't sourced env.
+ensure_dargo_std_path() {
+    [ -n "${DARGO_STD_PATH:-}" ] && return 0
+
+    local active std_path
+    active=$(settings_get active_node)
+    [ -n "$active" ] || active=$(settings_get active)
+    [ -n "$active" ] || return 0
+
+    std_path="$PSY_HOME/toolchains/psy-${active}/lib/psy-std/std.psy"
+    if [ -f "$std_path" ]; then
+        export DARGO_STD_PATH="$std_path"
+    fi
+}
+
+# Package sources plus the std tree and path-dependency trees that dargo can
+# read from outside this package. Git/URL dependencies and symlinks are refused
+# so an automatic certificate cannot hide an untracked input. This is still not
+# a compiler lockfile: it binds the files visible at build and deploy time.
+compiler_input_paths() {
+    command -v python3 >/dev/null 2>&1 || return 1
+    python3 - <<'PY'
+import os, re, sys
+root = os.getcwd()
+std = os.environ.get("DARGO_STD_PATH", "")
+if not std or os.path.islink(std) or not os.path.isfile(std):
+    sys.exit(1)
+std_dir = os.path.dirname(os.path.abspath(std))
+if os.path.islink(std_dir) or not os.path.isdir(std_dir):
+    sys.exit(1)
+queue = [std_dir]
+seen = set()
+path_re = re.compile(r'\bpath\s*=\s*"([^"]*)"')
+untracked_re = re.compile(r'\b(?:git|url|rev|branch)\s*=')
+
+def manifest_text(path):
+    if os.path.islink(path) or not os.path.isfile(path):
+        sys.exit(1)
+    try:
+        return open(path, "r", encoding="utf-8").read()
+    except OSError:
+        sys.exit(1)
+
+def add_manifest(path, base):
+    if not os.path.exists(path):
+        return
+    for line in manifest_text(path).splitlines():
+        code = line.split("#", 1)[0]
+        if untracked_re.search(code):
+            sys.exit(1)
+        match = path_re.search(code)
+        if match:
+            raw = match.group(1)
+            if raw == "" or "\n" in raw or "\r" in raw:
+                sys.exit(1)
+            queue.append(os.path.abspath(os.path.join(base, raw)))
+        elif re.search(r'\bpath\s*=', code):
+            sys.exit(1)
+
+add_manifest(os.path.join(root, "Dargo.toml"), root)
+lock = os.path.join(root, "Dargo.lock")
+if os.path.exists(lock):
+    add_manifest(lock, root)
+
+emitted = [os.path.abspath(std)]
+while queue:
+    current = queue.pop(0)
+    if current in seen:
+        continue
+    if len(seen) > 10000:
+        sys.exit(1)
+    seen.add(current)
+    if os.path.islink(current) or not os.path.isdir(current):
+        sys.exit(1)
+    add_manifest(os.path.join(current, "Dargo.toml"), current)
+    for dirpath, dirnames, filenames in os.walk(current, followlinks=False):
+        for name in dirnames:
+            if os.path.islink(os.path.join(dirpath, name)):
+                sys.exit(1)
+        for name in filenames:
+            joined = os.path.join(dirpath, name)
+            if name.endswith(".psy") or name in ("Dargo.toml", "Dargo.lock"):
+                if os.path.islink(joined) or not os.path.isfile(joined):
+                    sys.exit(1)
+                emitted.append(os.path.abspath(joined))
+for path in emitted:
+    if "\n" in path or "\r" in path:
+        sys.exit(1)
+    sys.stdout.write(path + "\0")
+PY
+}
+
+# Automatic deploy provenance binds this package, the resolved std tree, and
+# local path dependencies. Keep this in common.sh, which is already installed
+# with both commands.
+project_source_snapshot() (
+    local paths records path digest inputs
+    ensure_dargo_std_path
+    paths=$(mktemp) || exit 1
+    records=$(mktemp) || { rm -f "$paths"; exit 1; }
+    inputs=$(mktemp) || { rm -f "$paths" "$records"; exit 1; }
+    trap 'rm -f "$paths" "$records" "$inputs"' EXIT
+    find . \( -type d \( -name .git -o -name target -o -name build -o -name node_modules \) -prune \) -o \
+        \( -type l -o -type f \( -name '*.psy' -o -name Dargo.toml -o -name Dargo.lock \) \) -print0 > "$paths" || exit 1
+    while IFS= read -r -d '' path; do
+        # Directory symlinks could hide untracked sources; don't certify them.
+        [ ! -L "$path" ] || exit 1
+        case "$path" in *$'\n'*|*$'\r'*) exit 1 ;; esac
+        digest=$(build_file_digest "$path") || exit 1
+        printf '%s  %s\n' "$digest" "$path" >> "$records" || exit 1
+    done < "$paths"
+    compiler_input_paths > "$inputs" || exit 1
+    while IFS= read -r -d '' path; do
+        [ -n "$path" ] || continue
+        [ ! -L "$path" ] || exit 1
+        case "$path" in *$'\n'*|*$'\r'*) exit 1 ;; esac
+        digest=$(build_file_digest "$path") || exit 1
+        printf '%s  %s\n' "$digest" "$path" >> "$records" || exit 1
+    done < "$inputs"
+    printf 'psyup-package-sources-v1\n'
+    LC_ALL=C sort -u "$records"
+)
+
+build_file_digest() {
+    local digest
+    if command -v sha256sum >/dev/null 2>&1; then
+        digest=$(sha256sum < "$1") || return 1
+    elif command -v shasum >/dev/null 2>&1; then
+        digest=$(shasum -a 256 < "$1") || return 1
+    else
+        return 1
+    fi
+    printf '%s\n' "${digest%% *}"
+}
+
+automatic_build_manifest() {
+    local artifact=$1 digest
+    [ -f "$artifact" ] || return 1
+    project_source_snapshot || return 1
+    digest=$(build_file_digest "$artifact") || return 1
+    printf 'artifact %s  %s\n' "$digest" "$artifact"
+}
+
+require_current_build_artifact() (
+    local candidate
+    [ -f .psy-build-manifest ] || exit 1
+    candidate=$(mktemp) || exit 1
+    trap 'rm -f "$candidate"' EXIT
+    automatic_build_manifest "$1" > "$candidate" || exit 1
+    cmp -s .psy-build-manifest "$candidate"
+)
+
+# Compare the manifest with a private byte copy of the artifact. The recorded
+# path stays the project artifact; the digest comes from the copy that deploy
+# will hand to the CLI, so a later rewrite of the live path is not selected.
+require_pinned_build_artifact() (
+    local pinned=$1 artifact=$2 candidate digest
+    [ -f .psy-build-manifest ] && [ -f "$pinned" ] || exit 1
+    candidate=$(mktemp) || exit 1
+    trap 'rm -f "$candidate"' EXIT
+    project_source_snapshot > "$candidate" || exit 1
+    digest=$(build_file_digest "$pinned") || exit 1
+    printf 'artifact %s  %s\n' "$digest" "$artifact" >> "$candidate" || exit 1
+    cmp -s .psy-build-manifest "$candidate"
+)
